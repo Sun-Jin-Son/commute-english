@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#4f46e5">
+  <title>출퇴근 영어</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-cards" viewBox="0 0 24 24"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c1 3 4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-5 0-8z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+  <symbol id="i-replay" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M19 12H6M11 6l-6 6 6 6"/></symbol>
+  <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></symbol>
+  <symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 14a8 8 0 0 1 16 0"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></symbol>
+  <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+  <symbol id="i-car" viewBox="0 0 24 24"><path d="M5 16h14v-4l-2-5H7l-2 5zM5 16v3M19 16v3M5 12h14"/><circle cx="8" cy="14" r=".6"/><circle cx="16" cy="14" r=".6"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-5 4V6a1 1 0 0 1 1-1z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v15H6a2 2 0 0 0-2 2zM4 20a2 2 0 0 0 2 2h13v-4"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="top">
+    <button class="iconbtn" id="backBtn" type="button" aria-label="뒤로" hidden><svg class="i"><use href="#i-back"/></svg></button>
+    <h1 id="topTitle">출퇴근 영어</h1>
+    <span class="pill flame" title="연속 학습일"><svg class="i"><use href="#i-flame"/></svg><span id="topStreak">0</span></span>
+    <span class="pill xp" id="topXp">0 XP</span>
+  </header>
+
+  <!-- HOME -->
+  <section class="view" id="v-home">
+    <div class="panel goals">
+      <div class="goal">
+        <div class="goal-head"><b>문장 듣기</b><span id="gLines">0 / 20</span></div>
+        <div class="bar"><div id="gLinesBar"></div></div>
+      </div>
+      <div class="goal">
+        <div class="goal-head"><b>영어로 말하기</b><span id="gSpoken">0 / 10</span></div>
+        <div class="bar"><div id="gSpokenBar"></div></div>
+      </div>
+      <div class="goal">
+        <div class="goal-head"><b>북마크 복습</b><span id="gReviews">0 / 10</span></div>
+        <div class="bar"><div id="gReviewsBar"></div></div>
+      </div>
+      <p class="muted small" id="streakText"></p>
+    </div>
+
+    <div class="panel" id="interestPanel" hidden>
+      <b>어떤 주제에 관심 있으세요?</b>
+      <p class="muted small">고른 주제와 내 수준에 맞춰 콘텐츠를 추천해 드려요. 나중에 언제든 바꿀 수 있어요.</p>
+      <div class="chips" id="topicChips" role="group" aria-label="관심 주제"></div>
+      <b style="margin-top:4px">처음 난이도</b>
+      <div class="seg wide" id="levelSeg" role="group" aria-label="처음 난이도">
+        <button type="button" data-lv="1.5">편하게</button><button type="button" data-lv="2.5">보통</button><button type="button" data-lv="3.3">도전</button>
+      </div>
+      <button class="btn primary wide" type="button" id="interestDone">이대로 추천받기</button>
+    </div>
+
+    <div id="recoBox" hidden>
+      <div class="sec-title"><h2>오늘의 추천</h2><button class="link" type="button" id="recoMore">다른 추천 보기</button></div>
+      <div class="packs" id="recoList"></div>
+      <div id="candBox" hidden>
+        <div class="sec-title"><h2>새 영상 후보</h2><span class="muted small">아직 팩이 아니에요</span></div>
+        <p class="muted small">보고 싶은 영상이 있으면 <b>팩 요청 복사</b>를 눌러 Claude 앱의 Code에서 이 PC 세션에 붙여넣으세요.</p>
+        <div class="packs" id="candList"></div>
+      </div>
+      <button class="link" type="button" id="editInterests">관심 주제 바꾸기</button>
+    </div>
+
+    <button class="resume" id="resume" type="button" hidden>
+      <span class="ic"><svg class="i"><use href="#i-next"/></svg></span>
+      <span class="resume-txt"><small>이어서 보기</small><b id="resumeTitle"></b></span>
+      <span class="resume-pct" id="resumePct"></span>
+    </button>
+
+    <div class="sec-title"><h2>전체 콘텐츠</h2>
+      <label class="btn small" for="importFile"><svg class="i"><use href="#i-import"/></svg>팩 가져오기</label>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+    </div>
+    <div class="packs" id="packList"><p class="muted">콘텐츠를 불러오는 중...</p></div>
+    <p class="muted small">새 팩은 PC의 Claude Code에 YouTube 링크나 발표 자료를 주면 만들어 OneDrive <b>EnglishApp/packs</b> 폴더에 넣어 줍니다. 여기서 <b>팩 가져오기</b>로 고르세요.</p>
+  </section>
+
+  <!-- PLAYER -->
+  <section class="view" id="v-player" hidden>
+    <div class="stagebox" id="stageBox">
+      <div class="media" id="mediaBox">
+        <div class="yt-wrap" id="ytWrap" hidden><div id="ytHost"></div></div>
+        <div class="audio-stage" id="audioStage" hidden>
+          <span class="ic"><svg class="i"><use href="#i-audio"/></svg></span>
+          <div><b id="audioTitle"></b><small id="audioSub"></small></div>
+        </div>
+        <audio id="audio" preload="auto"></audio>
+      </div>
+      <div class="fs-sub" id="fsSub" hidden>
+        <button class="fs-line" id="fsLine" type="button">
+          <span class="fs-en" id="fsEn"></span>
+          <span class="fs-ko" id="fsKo" hidden></span>
+        </button>
+        <div class="fs-ctrl">
+          <button type="button" id="fsPrev" aria-label="이전 문장"><svg class="i"><use href="#i-prev"/></svg></button>
+          <button type="button" id="fsReplay" aria-label="이 문장 다시"><svg class="i"><use href="#i-replay"/></svg></button>
+          <button type="button" id="fsPlay" class="main" aria-label="재생"><svg viewBox="0 0 24 24" id="fsPlayIcon"><path d="M8 5v14l11-7z"/></svg></button>
+          <button type="button" id="fsSave" aria-label="북마크" aria-pressed="false"><svg class="i"><use href="#i-star"/></svg></button>
+          <button type="button" id="fsNext" aria-label="알아요, 다음 문장"><svg class="i"><use href="#i-next"/></svg></button>
+          <button type="button" id="fsExit" aria-label="전체 화면 닫기"><svg class="i"><use href="#i-shrink"/></svg></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="line-card" id="lineCard">
+      <div class="line-meta"><span id="lineCount">0 / 0</span><span class="chip" id="lineWho" hidden></span></div>
+      <p class="line-en" id="lineEn">재생을 누르면 문장이 여기에 나와요</p>
+      <button class="line-ko" id="lineKo" type="button"><span>뜻 보기</span></button>
+      <p class="line-note" id="lineNote" hidden></p>
+      <button class="study-btn" id="studyBtn" type="button" aria-expanded="false" hidden><svg class="i"><use href="#i-book"/></svg><span>문장 분석</span></button>
+      <div id="studyBox" hidden></div>
+    </div>
+
+    <div class="ctrl">
+      <button class="cbtn" id="cPrev" type="button" aria-label="이전 문장"><svg class="i"><use href="#i-prev"/></svg></button>
+      <button class="cbtn" id="cReplay" type="button" aria-label="이 문장 다시"><svg class="i"><use href="#i-replay"/></svg></button>
+      <button class="cbtn main" id="cPlay" type="button" aria-label="재생"><svg viewBox="0 0 24 24" id="cPlayIcon"><path d="M8 5v14l11-7z"/></svg></button>
+      <button class="cbtn" id="cSave" type="button" aria-label="북마크" aria-pressed="false"><svg class="i"><use href="#i-star"/></svg></button>
+      <button class="cbtn" id="cNext" type="button" aria-label="알아요, 다음 문장"><svg class="i"><use href="#i-next"/></svg></button>
+    </div>
+    <div class="ctrl-labels"><span>이전</span><span>다시</span><span></span><span id="saveLbl">북마크</span><span>알아요</span></div>
+
+    <div class="opts">
+      <div class="seg" role="group" aria-label="속도"><button type="button" data-rate="0.75">0.75x</button><button type="button" data-rate="1">1x</button><button type="button" data-rate="1.25">1.25x</button></div>
+      <button class="toggle" id="tPause" type="button" aria-pressed="true">문장마다 멈춤</button>
+      <button class="toggle" id="tKo" type="button" aria-pressed="false">뜻 항상 보기</button>
+      <button class="toggle fsbtn" id="fsOpen" type="button"><svg class="i"><use href="#i-expand"/></svg>전체 화면</button>
+    </div>
+
+    <div class="panel rate" id="ratePanel" hidden>
+      <b id="rateTitle">이 콘텐츠 어땠어요?</b>
+      <p class="muted small">답해 주시면 다음 추천 난이도를 맞춰요.</p>
+      <div class="grades">
+        <button class="btn" type="button" data-rate-v="easy">쉬웠어요</button>
+        <button class="btn" type="button" data-rate-v="ok">적당했어요</button>
+        <button class="btn" type="button" data-rate-v="hard">어려웠어요</button>
+      </div>
+    </div>
+
+    <div class="sec-title"><h2>스크립트</h2><span class="muted small" id="savedCount"></span></div>
+    <ol class="script" id="script"></ol>
+    <p class="muted small" id="credit"></p>
+    <button class="link danger" type="button" id="deletePack" hidden>이 팩 삭제</button>
+  </section>
+
+  <!-- SPEAK -->
+  <section class="view" id="v-speak" hidden>
+    <p class="muted small">한국어를 보고 몇 초 안에 영어로 소리 내어 말하는 연습이에요. 머릿속에서 문장을 완성하려 하지 말고 생각나는 대로 먼저 뱉어 보세요.</p>
+    <div class="filters" id="skFilters" role="group" aria-label="연습할 콘텐츠"></div>
+    <button class="mode" type="button" id="modeA">
+      <span class="ic"><svg class="i"><use href="#i-mic"/></svg></span>
+      <span><b>5초 즉답</b><small id="modeAText">본 영상의 문장을 한국어로 보고 영어로 바로 말하기. 정답은 원래 목소리로 들려줘요.</small></span>
+      <span class="cnt" id="modeACnt">0</span>
+    </button>
+    <button class="mode" type="button" id="modeB">
+      <span class="ic alt"><svg class="i"><use href="#i-spark"/></svg></span>
+      <span><b>내 상황으로 바꿔 말하기</b><small id="modeBText">영상의 핵심 표현을 내 업무 상황에 넣어 말하기. 같은 틀을 여러 번 써서 입에 붙여요.</small></span>
+      <span class="cnt" id="modeBCnt">0</span>
+    </button>
+    <button class="mode" type="button" id="modeC">
+      <span class="ic drive"><svg class="i"><use href="#i-car"/></svg></span>
+      <span><b>운전 모드</b><small id="modeCText">화면을 안 봐도 돼요. 한국어를 들려주면 영어로 말하고, 잠시 뒤 정답을 들어요.</small></span>
+      <span class="cnt" id="modeCCnt">0</span>
+    </button>
+    <button class="mode" type="button" id="modeD">
+      <span class="ic alt2"><svg class="i"><use href="#i-chat"/></svg></span>
+      <span><b>30초 말하기</b><small id="modeDText">본 영상에 대한 질문에 30초 동안 자유롭게 말하기. 내가 한 말을 Claude에게 보내 피드백을 받아요.</small></span>
+      <span class="cnt" id="modeDCnt">0</span>
+    </button>
+    <div class="panel">
+      <div class="set-row"><span>소리 내기 어려울 때</span><button class="toggle" type="button" id="tSilent" aria-pressed="false">속으로 말하기</button></div>
+      <p class="muted small">지하철처럼 말할 수 없을 때 켜세요. 녹음 없이 속으로 말한 뒤 정답을 확인해요.</p>
+    </div>
+    <h2 class="sec-title">말하기 기록</h2>
+    <div class="panel"><div class="facts" id="skFacts"></div></div>
+  </section>
+
+  <!-- SPEAK SESSION -->
+  <section class="view" id="v-speakrun" hidden>
+    <div class="panel sk-card">
+      <div class="rv-top"><span id="skSource"></span><span id="skCount"></span></div>
+      <span class="rv-kind" id="skKind"></span>
+      <p class="sk-ko" id="skKo"></p>
+      <button class="link" type="button" id="skHintBtn" hidden>힌트 보기</button>
+      <p class="sk-hint" id="skHint" hidden></p>
+      <div class="sk-timer" id="skTimerWrap"><div id="skTimer"></div></div>
+      <div class="sk-rec" id="skRec">
+        <button class="sk-mic" type="button" id="skMic" aria-label="다 말했어요"><svg class="i"><use href="#i-mic"/></svg></button>
+        <div class="sk-level" aria-hidden="true"><div id="skLevel"></div></div>
+        <p class="muted small" id="skRecText">듣고 있어요. 다 말하면 마이크를 누르세요.</p>
+      </div>
+      <button class="btn primary wide" type="button" id="skReveal" hidden>정답 보기</button>
+      <div class="sk-answer" id="skAnswer" hidden>
+        <p class="sk-onset" id="skOnset"></p>
+        <p class="rv-en" id="skEn"></p>
+        <div class="yt-wrap small" id="skYtWrap" hidden><div id="skYtHost"></div></div>
+        <div class="row">
+          <button class="btn small" type="button" id="skModel"><svg class="i"><use href="#i-sound"/></svg><span id="skModelLbl">원어민 음성</span></button>
+          <button class="btn small" type="button" id="skMine"><svg class="i"><use href="#i-mic"/></svg>내 녹음</button>
+        </div>
+        <div class="grades">
+          <button class="btn good" type="button" data-sg="good">바로 나왔어요</button>
+          <button class="btn" type="button" data-sg="slow">버벅였어요</button>
+          <button class="btn" type="button" data-sg="miss">못 했어요</button>
+        </div>
+      </div>
+      <audio id="skAudio" preload="auto"></audio>
+    </div>
+    <div class="panel" id="skDone" hidden>
+      <b id="skDoneTitle">10문장 끝</b>
+      <p class="muted" id="skDoneText"></p>
+      <button class="btn primary" type="button" id="skAgain">한 번 더</button>
+    </div>
+  </section>
+
+  <!-- DRIVING MODE -->
+  <section class="view" id="v-drive" hidden>
+    <div class="drive-stage">
+      <div class="dv-top"><span id="dvSrc"></span><b id="dvCount">0 / 0</b></div>
+      <div class="dv-segs" id="dvSegs"></div>
+      <p class="dv-phase" id="dvPhase">재생을 누르면 시작해요</p>
+      <p class="dv-ko" id="dvKo"></p>
+      <p class="dv-en" id="dvEn"></p>
+      <div class="yt-wrap small" id="dvYtWrap" hidden><div id="dvYtHost"></div></div>
+      <div class="dv-ctrl">
+        <button type="button" id="dvPrev" aria-label="이전 문장"><svg class="i"><use href="#i-prev"/></svg></button>
+        <button type="button" id="dvPlay" class="big" aria-label="재생"><svg viewBox="0 0 24 24" id="dvPlayIcon"><path d="M8 5v14l11-7z"/></svg></button>
+        <button type="button" id="dvNext" aria-label="다음 문장"><svg class="i"><use href="#i-next"/></svg></button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="set-row"><span>내용</span><div class="seg" data-dv="src"><button type="button" data-v="mix">섞어서</button><button type="button" data-v="A">영상 문장</button><button type="button" data-v="B">내 상황</button></div></div>
+      <div class="set-row"><span>생각 시간</span><div class="seg" data-dv="gap"><button type="button" data-v="4">4초</button><button type="button" data-v="6">6초</button><button type="button" data-v="8">8초</button></div></div>
+      <div class="set-row"><span>정답 반복</span><div class="seg" data-dv="reps"><button type="button" data-v="1">1번</button><button type="button" data-v="2">2번</button></div></div>
+    </div>
+    <p class="muted small">출발 전에 재생을 눌러 두세요. 운전 중에는 화면을 만지지 말고, 핸들이나 블루투스의 다음 곡·일시정지 버튼을 쓰세요. 재생하는 동안 화면이 켜진 채로 유지돼요. 앱을 내리면 소리가 멈출 수 있어요.</p>
+  </section>
+
+  <!-- 30-SECOND TALK -->
+  <section class="view" id="v-talk" hidden>
+    <div class="panel">
+      <span class="rv-kind" id="tkSource"></span>
+      <p class="sk-ko" id="tkQ"></p>
+      <p class="muted" id="tkQko"></p>
+      <button class="link" type="button" id="tkOther">다른 질문</button>
+      <div class="sk-timer" id="tkTimerWrap"><div id="tkTimer"></div></div>
+      <div class="row">
+        <button class="btn primary" type="button" id="tkStart"><svg class="i"><use href="#i-mic"/></svg><span>말하기 시작</span></button>
+        <span class="tk-sec" id="tkSec">0초</span>
+      </div>
+      <p class="muted small" id="tkHow"></p>
+      <label class="field-lbl" for="tkText">내가 한 말</label>
+      <textarea class="talk-text" id="tkText" rows="5" placeholder="받아 적은 내용이 여기 들어와요. 자동 받아쓰기가 안 되면 여기를 누르고 키보드의 마이크 버튼으로 말해도 돼요."></textarea>
+      <button class="btn small" type="button" id="tkMine" hidden><svg class="i"><use href="#i-sound"/></svg>내 녹음 듣기</button>
+      <button class="btn primary wide" type="button" id="tkSave">저장하기</button>
+    </div>
+    <div class="panel" id="tkList"></div>
+    <audio id="tkAudio" preload="auto"></audio>
+  </section>
+
+  <!-- ASK CLAUDE -->
+  <section class="view" id="v-ask" hidden>
+    <p class="muted small">고른 내용이 질문 글로 만들어져 복사돼요. Claude 앱에 붙여넣으면 북마크 질문에는 답을, 말하기 기록에는 한국어 뜻 → 평가 → 수정 순서로 피드백을 줘요.</p>
+    <div class="panel">
+      <label class="field-lbl" for="akAbout">내 소개</label>
+      <p class="muted small">질문 글 맨 앞에 들어가요. 하는 일이나 연습 목적을 적으면 Claude가 그에 맞춰 답해요. 이 휴대폰에만 저장돼요.</p>
+      <textarea class="talk-text" id="akAbout" rows="3" placeholder="예: 나는 IT 회사에서 일하는 한국인 엔지니어고, 회의와 발표 영어를 연습 중이야."></textarea>
+    </div>
+    <div class="sec-title"><h2>북마크 노트</h2><button class="link" type="button" id="akAllNotes">모두 선택</button></div>
+    <div class="panel ak-list" id="akNotes"></div>
+    <div class="sec-title"><h2>30초 말하기</h2><button class="link" type="button" id="akAllTalks">모두 선택</button></div>
+    <div class="panel ak-list" id="akTalks"></div>
+    <button class="btn primary wide" type="button" id="akCopy"><svg class="i"><use href="#i-copy"/></svg><span>골라서 복사하기</span></button>
+    <details><summary>복사될 글 미리 보기</summary><textarea class="talk-text" id="akPreview" rows="10" readonly></textarea></details>
+  </section>
+
+  <!-- BOOKMARKS -->
+  <section class="view" id="v-saved" hidden>
+    <button class="ask-cta" type="button" id="askOpen">
+      <span class="ic"><svg class="i"><use href="#i-chat"/></svg></span>
+      <span><b>Claude에게 묻기</b><small id="askText">노트와 30초 말하기를 복사해서 Claude 앱에 붙여넣어요</small></span>
+    </button>
+    <div class="panel review-start">
+      <div>
+        <b id="dueTitle">오늘 복습할 문장</b>
+        <p class="muted small" id="dueText"></p>
+      </div>
+      <button class="btn primary" type="button" id="startReview">복습 시작</button>
+    </div>
+    <div class="sec-title"><h2>본 콘텐츠</h2><span class="muted small" id="savedTotal"></span></div>
+    <div class="packs" id="watchedList"></div>
+    <div class="panel">
+      <b>백업</b>
+      <p class="muted small">북마크와 기록은 이 휴대폰에만 저장돼요. 휴대폰을 바꾸기 전에 백업 파일을 OneDrive에 저장해 두세요.</p>
+      <div class="row">
+        <button class="btn" type="button" id="exportBtn">백업 내보내기</button>
+        <label class="btn" for="restoreFile">백업 불러오기</label>
+        <input type="file" id="restoreFile" accept=".json,application/json" hidden>
+      </div>
+    </div>
+  </section>
+
+  <!-- BOOKMARKS OF ONE PACK -->
+  <section class="view" id="v-savedpack" hidden>
+    <div class="yt-wrap small" id="spYtWrap" hidden><div id="spYtHost"></div></div>
+    <div class="sp-head">
+      <span class="muted small" id="spCount"></span>
+      <button class="toggle" type="button" id="spShowAll" aria-pressed="false">영어 모두 보기</button>
+    </div>
+    <p class="muted small">한국어 뜻을 보고 영어로 떠올려 본 뒤 눌러서 확인하세요. 스피커를 누르면 원래 음성이 나와요.</p>
+    <ol class="bmlist" id="spList"></ol>
+    <button class="btn wide" type="button" id="spOpen"><svg class="i"><use href="#i-video"/></svg>이 콘텐츠 이어서 보기</button>
+  </section>
+
+  <!-- REVIEW -->
+  <section class="view" id="v-review" hidden>
+    <div class="panel rv" id="rvCard">
+      <div class="rv-top"><span id="rvSource"></span><span id="rvCount"></span></div>
+      <div class="yt-wrap small" id="rvYtWrap" hidden><div id="rvYtHost"></div></div>
+      <button class="btn listen" id="rvListen" type="button"><svg class="i"><use href="#i-sound"/></svg>원래 음성 다시 듣기</button>
+      <p class="rv-hint" id="rvHint">들어 보고 무슨 뜻인지 떠올려 보세요</p>
+      <div class="rv-back" id="rvBack" hidden>
+        <p class="rv-en" id="rvEn"></p>
+        <p class="rv-ko" id="rvKo"></p>
+        <p class="line-note" id="rvNote" hidden></p>
+      </div>
+      <button class="btn primary wide" id="rvReveal" type="button">정답 보기</button>
+      <div class="grades" id="rvGrades" hidden>
+        <button class="btn" type="button" data-g="again">몰랐어요</button>
+        <button class="btn" type="button" data-g="hard">애매해요</button>
+        <button class="btn good" type="button" data-g="good">알았어요</button>
+      </div>
+      <button class="link" id="rvTts" type="button">기계 음성으로 듣기</button>
+    </div>
+    <div class="panel" id="rvDone" hidden>
+      <b id="rvDoneTitle">오늘 복습 끝</b>
+      <p class="muted" id="rvDoneText"></p>
+      <button class="btn" type="button" id="rvMore" hidden>10장 더 하기</button>
+    </div>
+  </section>
+  <audio id="clipAudio" preload="auto"></audio>
+</div>
+
+<nav class="tabs" aria-label="화면 이동">
+  <button type="button" data-tab="home" aria-current="page"><svg class="i"><use href="#i-home"/></svg>홈</button>
+  <button type="button" data-tab="speak"><svg class="i"><use href="#i-mic"/></svg>말하기</button>
+  <button type="button" data-tab="saved"><svg class="i"><use href="#i-star"/></svg>북마크<span class="badge" id="dueBadge" hidden></span></button>
+</nav>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

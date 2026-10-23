@@ -1,0 +1,1431 @@
+(() => {
+  "use strict";
+
+  const GOAL_LINES = 20;
+  const GOAL_REVIEWS = 10;
+  const INTERVALS = [0, 1, 3, 7, 14, 30];
+  // topic ids match tools/topics.json on the PC
+  const TOPICS = { tech: "기술·반도체", meeting: "회의·협업", present: "발표·커뮤니케이션", career: "커리어·리더십", habit: "습관·자기계발", daily: "일상·여행", science: "과학·미래", biz: "비즈니스", comedy: "코미디·예능" };
+  const DEFAULT_TOPICS = ["tech", "meeting", "present", "career"];
+  const LV = { A1: 0.5, A2: 1, B1: 2, B2: 3, C1: 4, C2: 5 };
+  const lvNum = (s) => { const m = String(s || "").toUpperCase().match(/[ABC][12]/g); return m ? m.reduce((a, x) => a + LV[x], 0) / m.length : null; };
+  const lvName = (n) => (n < 1.5 ? "A2" : n < 2.5 ? "B1" : n < 3.5 ? "B2" : "C1");
+
+  // ---------- helpers ----------
+  const $ = (s) => document.querySelector(s);
+  const pad = (n) => String(n).padStart(2, "0");
+  const dayKey = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const parseDay = (k) => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+  const daysBetween = (a, b) => Math.round((parseDay(b) - parseDay(a)) / 86400000);
+  const addDays = (k, n) => { const d = parseDay(k); d.setDate(d.getDate() + n); return dayKey(d); };
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const icon = (name) => {
+    const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("class", "i"); s.setAttribute("aria-hidden", "true");
+    const u = document.createElementNS("http://www.w3.org/2000/svg", "use"); u.setAttribute("href", "#i-" + name); s.append(u); return s;
+  };
+  const load = (k, d) => { try { const v = localStorage.getItem("cep:" + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+  const save = (k, v) => { try { localStorage.setItem("cep:" + k, JSON.stringify(v)); } catch (e) { toast("저장 공간이 부족해요."); } };
+  let toastTimer = 0;
+  function toast(msg) {
+    const t = $("#toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+  }
+  const TODAY = () => dayKey();
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ---------- packs store (IndexedDB for imported packs, which can hold audio) ----------
+  const idb = (() => {
+    let dbp = null;
+    const db = () => dbp || (dbp = new Promise((res, rej) => {
+      const r = indexedDB.open("ce-pwa", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("packs", { keyPath: "id" });
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    }));
+    const tx = async (mode, fn) => {
+      const d = await db();
+      return new Promise((res, rej) => {
+        const t = d.transaction("packs", mode); const req = fn(t.objectStore("packs"));
+        t.oncomplete = () => res(req && req.result); t.onerror = () => rej(t.error);
+      });
+    };
+    return { all: () => tx("readonly", (s) => s.getAll()), put: (p) => tx("readwrite", (s) => s.put(p)), del: (id) => tx("readwrite", (s) => s.delete(id)) };
+  })();
+
+  // ---------- state ----------
+  const S = {
+    p: load("progress", { xp: 0, streak: 0, best: 0, last: null, days: {}, seen: {}, cont: null }),
+    cards: load("cards", {}),
+    cand: load("candidates", {}),
+    speak: load("speak", {}),   // per prompt: { n, good, slow, miss, last, ms (best voice onset) }
+    talks: load("talks", []),   // 30-second answers: { id, packId, title, q, qko, text, secs, at, sent }
+    set: Object.assign({ rate: 1, pauseEach: true, showKo: false, topics: null, target: 2.5, rated: {} }, load("settings", {})),
+    packs: {}
+  };
+  const saveP = () => save("progress", S.p);
+  const saveCards = () => save("cards", S.cards);
+  const day = () => (S.p.days[TODAY()] = Object.assign({ xp: 0, lines: 0, reviews: 0, spoken: 0 }, S.p.days[TODAY()] || {}));
+  const GOAL_SPOKEN = 10;
+
+  function displayStreak() {
+    if (!S.p.last) return 0;
+    return daysBetween(S.p.last, TODAY()) <= 1 ? S.p.streak : 0;
+  }
+  function touchDay() {
+    const t = TODAY();
+    if (S.p.last === t) return;
+    const gap = S.p.last ? daysBetween(S.p.last, t) : 0;
+    S.p.streak = gap === 1 ? S.p.streak + 1 : 1;
+    S.p.last = t; S.p.best = Math.max(S.p.best || 0, S.p.streak);
+  }
+  function addXP(n) { touchDay(); S.p.xp += n; day().xp += n; saveP(); renderChrome(); }
+
+  // ---------- pack loading & validation ----------
+  function normStudy(s) {
+    if (!s || typeof s !== "object") return null;
+    const txt = (v) => (typeof v === "string" ? v.trim() : "");
+    const parts = (Array.isArray(s.parts) ? s.parts : []).map((p) => ({ t: txt(p && p.t), m: txt(p && p.m), why: txt(p && p.why) })).filter((p) => p.t);
+    const more = (Array.isArray(s.more) ? s.more : []).map(txt).filter(Boolean);
+    const out = { parts, grammar: txt(s.grammar), more, use: txt(s.use) };
+    return parts.length || out.grammar || more.length || out.use ? out : null;
+  }
+  // Builds the "문장 분석" view: chunk-by-chunk meaning and why, grammar point, related expressions, a work example
+  function studyView(st) {
+    const box = el("div", "study");
+    if (st.parts.length) {
+      box.append(el("h3", "", "표현 풀이"));
+      const ul = el("ul", "parts");
+      st.parts.forEach((p) => {
+        const li = el("li");
+        li.append(el("b", "chunk", p.t));
+        if (p.m) li.append(el("span", "mean", p.m));
+        if (p.why) li.append(el("p", "why", p.why));
+        ul.append(li);
+      });
+      box.append(ul);
+    }
+    if (st.grammar) box.append(el("h3", "", "문법 포인트"), el("p", "", st.grammar));
+    if (st.more.length) {
+      box.append(el("h3", "", "같이 알면 좋은 표현"));
+      const ul = el("ul", "more"); st.more.forEach((m) => ul.append(el("li", "", m))); box.append(ul);
+    }
+    if (st.use) {
+      box.append(el("h3", "", "이렇게 써 보세요"));
+      const row = el("div", "use");
+      const sp = el("button", "speak-sm"); sp.type = "button"; sp.setAttribute("aria-label", "예문 듣기"); sp.append(icon("sound"));
+      const en = st.use.replace(/\s*\(.*\)\s*$/, "");
+      sp.onclick = () => tts(en);
+      row.append(el("p", "", st.use), sp);
+      box.append(row);
+    }
+    return box;
+  }
+  function normPack(o) {
+    if (!o || o.type !== "ce-pack") throw new Error("출퇴근 영어 팩 파일이 아니에요.");
+    const m = o.media || {};
+    if (m.kind === "youtube" && !/^[A-Za-z0-9_-]{6,20}$/.test(m.id || "")) throw new Error("YouTube 영상 정보가 잘못됐어요.");
+    if (m.kind === "audio" && !m.src && !m.data && !m.blob) throw new Error("팩에 음성 파일이 없어요.");
+    if (m.kind !== "youtube" && m.kind !== "audio") throw new Error("지원하지 않는 형식의 팩이에요.");
+    const lines = (Array.isArray(o.lines) ? o.lines : [])
+      .filter((l) => l && typeof l.en === "string" && l.en.trim() && Number.isFinite(+l.t))
+      .map((l) => ({ t: +l.t, e: Number.isFinite(+l.e) ? +l.e : +l.t + 4, en: l.en.trim(), ko: (l.ko || "").trim(), note: (l.note || "").trim(), who: l.who || "", study: normStudy(l.study) }))
+      .sort((a, b) => a.t - b.t);
+    if (!lines.length) throw new Error("팩에 문장이 없어요.");
+    const id = String(o.id || "").replace(/[^A-Za-z0-9_.-]/g, "-") || "pack-" + Date.now();
+    const speak = (Array.isArray(o.speak) ? o.speak : [])
+      .filter((s) => s && typeof s.ko === "string" && typeof s.en === "string" && s.ko.trim() && s.en.trim())
+      .map((s) => ({ ko: s.ko.trim(), en: s.en.trim(), frame: typeof s.frame === "string" ? s.frame.trim() : "", line: Number.isInteger(s.line) ? s.line : -1 }));
+    const meta = o.meta && typeof o.meta === "object" ? o.meta : {};
+    const topics = (Array.isArray(meta.topics) ? meta.topics : []).map(String).filter((t) => TOPICS[t]);
+    const minutes = Number(meta.minutes) || Math.round((lines[lines.length - 1].e - lines[0].t) / 6) / 10;
+    return {
+      id, title: String(o.title || "제목 없음"), author: String(o.author || ""), level: String(o.level || ""),
+      tags: Array.isArray(o.tags) ? o.tags.map(String) : [], meta: { topics, minutes, url: meta.url || "", shorts: !!meta.shorts },
+      media: m, lines, speak, addedAt: o.addedAt || new Date().toISOString(),
+      talkQs: (Array.isArray(o.talk) ? o.talk : []).filter((q) => q && typeof q.en === "string" && q.en.trim()).map((q) => ({ en: q.en.trim(), ko: typeof q.ko === "string" ? q.ko.trim() : "" }))
+    };
+  }
+  // The app ships with no content: every pack is imported on the phone and kept in IndexedDB
+  async function loadPacks() {
+    try {
+      (await idb.all()).forEach((p) => {
+        try { const n = normPack(Object.assign({ type: "ce-pack" }, p)); S.packs[n.id] = n; } catch (e) { console.warn("stored pack skipped", p.id, e); }
+      });
+    } catch (e) { console.warn("idb failed", e); }
+  }
+  async function storePack(o) {
+    const p = normPack(o);
+    if (p.media.kind === "audio" && p.media.data) {
+      try { p.media = { kind: "audio", blob: await fetch(p.media.data).then((r) => r.blob()) }; }
+      catch (e) { throw new Error("팩 안의 음성 파일이 손상됐어요."); }
+    }
+    if (S.packs[p.id]) p.addedAt = S.packs[p.id].addedAt;
+    try { await idb.put(p); } catch (e) { throw new Error("저장 공간이 부족해서 팩을 저장하지 못했어요."); }
+    S.packs[p.id] = p;
+    return p;
+  }
+  async function importPackFile(file) {
+    let o;
+    try { o = JSON.parse(await file.text()); } catch (e) { toast("파일을 읽지 못했어요. 팩 파일(.json)이 맞는지 확인해 주세요."); return; }
+    try {
+      if (o && o.type === "ce-bundle" && Array.isArray(o.packs)) {
+        let ok = 0;
+        for (const p of o.packs) { try { await storePack(p); ok++; } catch (e) { console.warn("bundle item", e); } }
+        const cands = Array.isArray(o.candidates) ? o.candidates.filter((c) => c && /^[A-Za-z0-9_-]{6,20}$/.test(c.id || "")) : [];
+        cands.forEach((c) => { if (!S.cand[c.id]) S.cand[c.id] = { id: c.id, title: String(c.title || ""), channel: String(c.channel || ""), duration: +c.duration || 0, topic: TOPICS[c.topic] ? c.topic : "", shorts: !!c.shorts, addedAt: Date.now() }; });
+        save("candidates", S.cand);
+        toast(ok || cands.length ? `"${o.title || "추천 묶음"}"에서 팩 ${ok}개${cands.length ? `, 영상 후보 ${cands.length}개` : ""}를 추가했어요` : "묶음 안에 읽을 수 있는 팩이 없어요.");
+      } else {
+        const existed = o && S.packs[o.id];
+        const p = await storePack(o);
+        toast(existed ? `"${p.title}" 팩을 새 내용으로 바꿨어요` : `"${p.title}" 팩을 추가했어요`);
+      }
+    } catch (e) { toast(e.message); }
+    renderHome();
+  }
+  $("#importFile").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) importPackFile(f); });
+  const mediaUrl = (p) => p.media.src || (p.media.blob ? (p._url || (p._url = URL.createObjectURL(p.media.blob))) : "");
+  const seenOf = (id) => (S.p.seen[id] = S.p.seen[id] || {});
+  const pctOf = (p) => Math.round(Object.keys(seenOf(p.id)).length / p.lines.length * 100);
+  const marksOf = (p) => p.lines.reduce((n, _, i) => n + (S.cards[`${p.id}~${i}`] ? 1 : 0), 0);
+  // 진행 = sentences seen / all, 학습도 = seen sentences that are not bookmarked / all (equals (all - bookmarks) / all once fully watched)
+  const statsText = (p) => {
+    const pct = pctOf(p);
+    if (!pct) return "진행 0% · 학습도 –";
+    const seen = seenOf(p.id);
+    const known = p.lines.reduce((n, _, i) => n + (seen[i] && !S.cards[`${p.id}~${i}`] ? 1 : 0), 0);
+    return `진행 ${pct}% · 학습도 ${Math.round(known / p.lines.length * 100)}% (아는 문장 ${known}/${p.lines.length})`;
+  };
+  const statsLine = (p) => el("div", "stats", statsText(p));
+
+  // ---------- YouTube API ----------
+  let ytApi = null;
+  function loadYt() {
+    if (ytApi) return ytApi;
+    ytApi = new Promise((res, rej) => {
+      window.onYouTubeIframeAPIReady = () => res(window.YT);
+      const s = document.createElement("script"); s.src = "https://www.youtube.com/iframe_api";
+      s.onerror = () => { ytApi = null; rej(new Error("yt")); }; document.head.append(s);
+    });
+    return ytApi;
+  }
+  async function makeYt(hostId, videoId, onState) {
+    const YT = await loadYt();
+    return new Promise((res) => {
+      const pl = new YT.Player(hostId, {
+        // fs: 0 hides YouTube's own fullscreen button so fullscreen goes through our stage, which keeps the subtitles visible
+        videoId, playerVars: { playsinline: 1, rel: 0, cc_load_policy: 0, iv_load_policy: 3, modestbranding: 1, fs: 0 },
+        events: { onReady: () => res(pl), onStateChange: (e) => onState && onState(e.data) }
+      });
+    });
+  }
+
+  // ---------- media abstraction ----------
+  const audio = $("#audio");
+  const M = {
+    kind: null, yt: null, ytVideo: null, ytPlaying: false,
+    play() { if (this.kind === "yt") this.yt && this.yt.playVideo(); else audio.play().catch(() => toast("재생하지 못했어요. 다시 눌러 주세요.")); },
+    pause() { if (this.kind === "yt") this.yt && this.yt.pauseVideo(); else audio.pause(); },
+    seek(t) { if (this.kind === "yt") this.yt && this.yt.seekTo(Math.max(0, t), true); else audio.currentTime = Math.max(0, t); },
+    time() { return this.kind === "yt" ? (this.yt && this.yt.getCurrentTime ? this.yt.getCurrentTime() : 0) : audio.currentTime; },
+    playing() { return this.kind === "yt" ? this.ytPlaying : !audio.paused; },
+    rate(r) { if (this.kind === "yt") this.yt && this.yt.setPlaybackRate(r); else audio.playbackRate = r; }
+  };
+  audio.addEventListener("play", () => renderPlayBtn());
+  audio.addEventListener("pause", () => renderPlayBtn());
+
+  // ---------- player ----------
+  const P = { pack: null, idx: -1, pausedFor: -1, timer: 0 };
+  async function openPack(id) {
+    const p = S.packs[id]; if (!p) return;
+    P.pack = p; P.idx = -1; P.pausedFor = -1;
+    S.p.cont = { id, t: S.p.cont && S.p.cont.id === id ? S.p.cont.t : 0 };
+    S.p.opened = Object.assign(S.p.opened || {}, { [id]: Date.now() }); saveP();
+    open("player", id);
+    $("#topTitle").textContent = p.title;
+    renderScript();
+    $("#credit").textContent = p.author ? `출처: ${p.author}` : "";
+    $("#deletePack").hidden = !!p.builtin;
+    checkRating();
+    const yt = p.media.kind === "youtube";
+    $("#ytWrap").hidden = !yt; $("#audioStage").hidden = yt;
+    $("#ytWrap").classList.toggle("vertical", !!p.meta.shorts);
+    if (yt) {
+      M.kind = "yt";
+      try {
+        if (!M.yt) { M.yt = await makeYt("ytHost", p.media.id, onYtState); M.ytVideo = p.media.id; }
+        else if (M.ytVideo !== p.media.id) { M.yt.cueVideoById(p.media.id, S.p.cont.t || 0); M.ytVideo = p.media.id; }
+        M.rate(S.set.rate);
+        if (S.p.cont.t) M.yt.cueVideoById(p.media.id, S.p.cont.t);
+      } catch (e) { toast("YouTube를 불러오지 못했어요. 인터넷 연결을 확인해 주세요."); }
+    } else {
+      M.kind = "audio";
+      $("#audioTitle").textContent = p.title; $("#audioSub").textContent = `${p.lines.length}문장 · 화면을 꺼도 계속 들을 수 있어요`;
+      const url = mediaUrl(p);
+      if (audio.getAttribute("src") !== url) { audio.src = url; audio.load(); }
+      audio.playbackRate = S.set.rate;
+      if (S.p.cont.t) audio.currentTime = S.p.cont.t;
+      setupMediaSession(p);
+    }
+    const start = lineAt((S.p.cont && S.p.cont.t) || 0);
+    setLine(Math.max(0, start), false);
+    renderOpts(); renderPlayBtn();
+    clearInterval(P.timer); P.timer = setInterval(tick, 150);
+  }
+  function onYtState(s) { M.ytPlaying = s === 1; renderPlayBtn(); }
+  function lineAt(t) {
+    const L = P.pack.lines; let i = -1;
+    for (let k = 0; k < L.length; k++) { if (L[k].t <= t + 0.05) i = k; else break; }
+    return i;
+  }
+  function tick() {
+    if (!P.pack) return;
+    const t = M.time(), L = P.pack.lines, cur = L[P.idx];
+    // check the end of the current sentence before switching, since one line's end is often the next line's start
+    if (S.set.pauseEach && cur && M.playing() && t >= cur.e - 0.08 && P.pausedFor !== P.idx) {
+      P.pausedFor = P.idx; M.pause(); return;
+    }
+    if (P.pausedFor === P.idx && !M.playing()) return;
+    const i = lineAt(t);
+    if (i !== P.idx && i >= 0) setLine(i, true);
+    if (Math.abs((S.p.cont.t || 0) - t) > 3) { S.p.cont.t = t; saveP(); }
+  }
+  function markSeen(i) {
+    const s = seenOf(P.pack.id);
+    if (s[i]) return;
+    s[i] = 1; const d = day(); d.lines += 1; addXP(1);
+    if (d.lines === GOAL_LINES) toast("오늘 문장 듣기 목표 달성!");
+    checkRating();
+  }
+  function setLine(i, fromPlayback) {
+    const L = P.pack.lines; if (i < 0 || i >= L.length) return;
+    if (fromPlayback && P.idx >= 0) markSeen(P.idx);
+    P.idx = i; if (P.pausedFor !== i) P.pausedFor = -1;
+    const l = L[i];
+    $("#lineCount").textContent = `${i + 1} / ${L.length}`;
+    $("#lineEn").textContent = l.en;
+    const who = $("#lineWho"); who.hidden = !l.who; who.textContent = l.who === "me" ? "나" : l.who === "partner" ? "상대" : l.who;
+    const ko = $("#lineKo"); ko.classList.toggle("shown", S.set.showKo); ko.firstChild.textContent = S.set.showKo ? (l.ko || "뜻이 없는 문장이에요") : "뜻 보기";
+    const n = $("#lineNote"); n.hidden = !(S.set.showKo && l.note); n.textContent = l.note;
+    renderStudy();
+    const saved = !!S.cards[cardId(P.pack.id, i)];
+    $("#cSave").setAttribute("aria-pressed", String(saved)); $("#saveLbl").textContent = saved ? "북마크됨" : "북마크";
+    document.querySelectorAll("#script .sline").forEach((li, k) => { li.classList.toggle("cur", k === i); });
+    const cur = document.querySelector(`#script .sline[data-i="${i}"]`);
+    if (cur && fromPlayback) cur.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if ("mediaSession" in navigator && M.kind === "audio") navigator.mediaSession.metadata && (navigator.mediaSession.metadata.artist = l.en);
+    updateFs();
+  }
+
+  // ---------- sentence study panel ----------
+  let studyOpen = false;
+  function renderStudy() {
+    const l = P.pack && P.pack.lines[P.idx];
+    const btn = $("#studyBtn"), box = $("#studyBox");
+    btn.hidden = !(l && l.study);
+    const show = !!(l && l.study && studyOpen);
+    btn.setAttribute("aria-expanded", String(show));
+    btn.querySelector("span").textContent = show ? "분석 닫기" : "문장 분석";
+    box.hidden = !show; box.textContent = "";
+    if (show) box.append(studyView(l.study));
+  }
+  $("#studyBtn").onclick = () => {
+    studyOpen = !studyOpen;
+    if (studyOpen && M.playing()) M.pause();   // reading needs a pause
+    renderStudy();
+  };
+
+  // ---------- fullscreen with subtitles ----------
+  const stageBox = $("#stageBox");
+  let fsOn = false, fsReal = false, fsKoOpen = false;
+  function updateFs() {
+    if (!fsOn || !P.pack || P.idx < 0) return;
+    const l = P.pack.lines[P.idx], saved = !!S.cards[cardId(P.pack.id, P.idx)];
+    $("#fsEn").textContent = l.en;
+    const ko = $("#fsKo"); ko.textContent = l.ko || "뜻이 없는 문장이에요"; ko.hidden = !(S.set.showKo || fsKoOpen);
+    $("#fsLine").classList.toggle("saved", saved);
+    $("#fsSave").setAttribute("aria-pressed", String(saved));
+  }
+  async function enterFs() {
+    if (!P.pack) return;
+    fsOn = true; fsKoOpen = false;
+    stageBox.classList.add("fs"); stageBox.classList.toggle("audio", M.kind === "audio");
+    $("#fsSub").hidden = false; document.body.style.overflow = "hidden";
+    updateFs(); renderPlayBtn();
+    try {
+      if (stageBox.requestFullscreen) { await stageBox.requestFullscreen({ navigationUI: "hide" }); fsReal = true; }
+      if (screen.orientation && screen.orientation.lock) await screen.orientation.lock(P.pack.meta.shorts ? "portrait" : "landscape").catch(() => {});
+    } catch (e) { fsReal = false; /* the fixed-position stage still works as fullscreen inside the browser */ }
+  }
+  function exitFs() {
+    if (!fsOn) return;
+    fsOn = false;
+    stageBox.classList.remove("fs", "audio"); $("#fsSub").hidden = true; document.body.style.overflow = "";
+    try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    fsReal = false;
+  }
+  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && fsOn && fsReal) exitFs(); });
+  $("#fsOpen").onclick = enterFs;
+  $("#fsExit").onclick = exitFs;
+  $("#fsLine").onclick = () => { fsKoOpen = !fsKoOpen; updateFs(); };
+  $("#fsPrev").onclick = () => { fsKoOpen = false; $("#cPrev").click(); };
+  $("#fsReplay").onclick = () => $("#cReplay").click();
+  $("#fsPlay").onclick = () => { fsKoOpen = false; $("#cPlay").click(); };
+  $("#fsNext").onclick = () => { fsKoOpen = false; $("#cNext").click(); };
+  $("#fsSave").onclick = () => { $("#cSave").click(); updateFs(); };
+  function goLine(i) {
+    const L = P.pack.lines; if (i < 0 || i >= L.length) return;
+    P.pausedFor = -1; M.seek(L[i].t); setLine(i, false); M.play();
+  }
+  $("#lineKo").onclick = () => {
+    if (!P.pack || P.idx < 0) return;
+    const l = P.pack.lines[P.idx], ko = $("#lineKo");
+    ko.classList.add("shown"); ko.firstChild.textContent = l.ko || "뜻이 없는 문장이에요";
+    const n = $("#lineNote"); n.hidden = !l.note; n.textContent = l.note;
+  };
+  $("#cPlay").onclick = () => {
+    if (!P.pack) return;
+    if (M.playing()) { M.pause(); return; }
+    const cur = P.pack.lines[P.idx];
+    if (cur && P.pausedFor === P.idx) { markSeen(P.idx); goLine(P.idx + 1 < P.pack.lines.length ? P.idx + 1 : P.idx); return; }
+    // skip intros (music, applause) before the first sentence
+    if (M.time() < P.pack.lines[0].t - 1) { goLine(0); return; }
+    M.play();
+  };
+  $("#cReplay").onclick = () => { if (P.pack) goLine(Math.max(0, P.idx)); };
+  $("#cPrev").onclick = () => { if (P.pack) goLine(Math.max(0, P.idx - 1)); };
+  $("#cNext").onclick = () => { if (!P.pack) return; markSeen(P.idx); goLine(Math.min(P.pack.lines.length - 1, P.idx + 1)); };
+  $("#cSave").onclick = () => { if (P.pack && P.idx >= 0) toggleCard(P.pack, P.idx); };
+  function renderPlayBtn() {
+    const on = M.playing();
+    const path = on ? '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
+    $("#cPlayIcon").innerHTML = path; $("#fsPlayIcon").innerHTML = path;
+    $("#cPlay").setAttribute("aria-label", on ? "일시정지" : "재생"); $("#fsPlay").setAttribute("aria-label", on ? "일시정지" : "재생");
+  }
+  function renderOpts() {
+    document.querySelectorAll(".seg [data-rate]").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.rate === +S.set.rate)));
+    $("#tPause").setAttribute("aria-pressed", String(S.set.pauseEach));
+    $("#tKo").setAttribute("aria-pressed", String(S.set.showKo));
+  }
+  document.querySelectorAll(".seg [data-rate]").forEach((b) => { b.onclick = () => { S.set.rate = +b.dataset.rate; save("settings", S.set); M.rate(S.set.rate); renderOpts(); }; });
+  $("#tPause").onclick = () => { S.set.pauseEach = !S.set.pauseEach; save("settings", S.set); renderOpts(); toast(S.set.pauseEach ? "문장이 끝날 때마다 멈춰요" : "멈추지 않고 이어서 재생해요"); };
+  $("#tKo").onclick = () => { S.set.showKo = !S.set.showKo; save("settings", S.set); renderOpts(); renderScript(); if (P.idx >= 0) setLine(P.idx, false); };
+
+  function renderScript() {
+    const ol = $("#script"); ol.textContent = "";
+    const seen = seenOf(P.pack.id);
+    P.pack.lines.forEach((l, i) => {
+      const li = el("li", "sline" + (seen[i] ? " seen" : "") + (i === P.idx ? " cur" : "")); li.dataset.i = i;
+      const go = el("button", "go"); go.type = "button";
+      go.append(el("div", "en", l.en)); if (S.set.showKo && l.ko) go.append(el("div", "ko", l.ko));
+      if (l.study) go.append(el("span", "has-study", "분석 있음"));
+      go.onclick = () => goLine(i);
+      const st = el("button", "star"); st.type = "button"; st.setAttribute("aria-label", "카드에 추가: " + l.en);
+      st.setAttribute("aria-pressed", String(!!S.cards[cardId(P.pack.id, i)])); st.append(icon("star"));
+      st.onclick = () => toggleCard(P.pack, i);
+      li.append(go, st); ol.append(li);
+    });
+    $("#savedCount").textContent = statsText(P.pack);
+  }
+
+  function setupMediaSession(p) {
+    if (!("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: p.title, artist: p.author || "출퇴근 영어", artwork: [{ src: "icons/icon-512.png", sizes: "512x512", type: "image/png" }] });
+      navigator.mediaSession.setActionHandler("play", () => M.play());
+      navigator.mediaSession.setActionHandler("pause", () => M.pause());
+      navigator.mediaSession.setActionHandler("previoustrack", () => goLine(Math.max(0, P.idx - 1)));
+      navigator.mediaSession.setActionHandler("nexttrack", () => goLine(Math.min(P.pack.lines.length - 1, P.idx + 1)));
+    } catch (e) { /* optional */ }
+  }
+
+  // ---------- cards ----------
+  const cardId = (packId, i) => `${packId}~${i}`;
+  function toggleCard(p, i) {
+    const id = cardId(p.id, i);
+    if (S.cards[id]) { delete S.cards[id]; toast("북마크를 해제했어요"); }
+    else {
+      const l = p.lines[i];
+      S.cards[id] = { id, packId: p.id, i, en: l.en, ko: l.ko, note: l.note, t: l.t, e: l.e, box: 0, due: TODAY(), added: TODAY() };
+      addXP(2); toast("북마크했어요. 북마크 탭에서 복습할 수 있어요");
+    }
+    saveCards();
+    if (P.pack === p) { renderScript(); if (P.idx === i) setLine(i, false); }
+    renderChrome();
+  }
+
+  // ---------- review ----------
+  const RV = { queue: [], i: 0 };
+
+  // ---------- clip playback (one sentence of the original audio/video) ----------
+  const clipAudio = $("#clipAudio");
+  const clipYt = {};   // host element id -> { pl, video }
+  let clipTimer = 0, clipRun = 0;
+  function watchSegment(t, e, now, stop) {
+    clearInterval(clipTimer);
+    const started = Date.now();
+    clipTimer = setInterval(() => {
+      const x = now();
+      // ignore the old position for a moment while the seek lands
+      if (Date.now() - started > 400 && x >= e && x >= t - 0.5) { stop(); clearInterval(clipTimer); }
+    }, 100);
+  }
+  async function playSegment(p, t, e, hostId, wrapId) {
+    stopClip();
+    const run = ++clipRun;
+    if (!p) return false;
+    if (p.media.kind === "youtube") {
+      $("#" + wrapId).hidden = false;
+      $("#" + wrapId).classList.toggle("vertical", !!p.meta.shorts);
+      try {
+        let c = clipYt[hostId];
+        if (!c) {
+          c = clipYt[hostId] = { video: p.media.id };
+          c.pl = await makeYt(hostId, p.media.id, null);
+          if (run !== clipRun) return true;
+          c.pl.seekTo(t, true); c.pl.playVideo();
+        } else if (c.video !== p.media.id) { c.pl.loadVideoById(p.media.id, t); c.video = p.media.id; }
+        else { c.pl.seekTo(t, true); c.pl.playVideo(); }
+        watchSegment(t, e, () => c.pl.getCurrentTime(), () => c.pl.pauseVideo());
+      } catch (err) { toast("YouTube를 불러오지 못했어요. 인터넷 연결을 확인해 주세요."); }
+      return true;
+    }
+    const url = mediaUrl(p);
+    if (clipAudio.getAttribute("src") !== url) clipAudio.src = url;
+    const go = () => {
+      if (run !== clipRun) return;
+      clipAudio.currentTime = t; clipAudio.playbackRate = S.set.rate;
+      clipAudio.play().catch(() => toast("재생하지 못했어요. 다시 눌러 주세요."));
+      watchSegment(t, e, () => clipAudio.currentTime, () => clipAudio.pause());
+    };
+    if (clipAudio.readyState >= 1) go(); else clipAudio.addEventListener("loadedmetadata", go, { once: true });
+    return true;
+  }
+  function stopClip() {
+    clearInterval(clipTimer);
+    try { clipAudio.pause(); } catch (e) {}
+    Object.values(clipYt).forEach((c) => { try { c.pl && c.pl.pauseVideo(); } catch (e) {} });
+  }
+  function startReview() {
+    const t = TODAY();
+    RV.queue = Object.values(S.cards).filter((c) => c.due <= t).sort((a, b) => (a.due === b.due ? a.box - b.box : a.due < b.due ? -1 : 1)).slice(0, GOAL_REVIEWS);
+    RV.i = 0; renderReview();
+  }
+  function renderReview() {
+    stopClip();
+    const c = RV.queue[RV.i];
+    $("#rvCard").hidden = !c; $("#rvDone").hidden = !!c;
+    if (!c) {
+      const total = Object.keys(S.cards).length, left = Object.values(S.cards).filter((x) => x.due <= TODAY()).length;
+      const next = Object.values(S.cards).map((x) => x.due).filter((x) => x > TODAY()).sort()[0];
+      $("#rvDoneTitle").textContent = total ? (left ? "잠깐 쉬어가요" : "오늘 복습 끝") : "아직 카드가 없어요";
+      $("#rvDoneText").textContent = total
+        ? (left ? `오늘 볼 카드가 ${left}장 더 있어요.` : `다음 복습은 ${next ? next.slice(5).replace("-", "월 ") + "일" : "카드를 더 모은 뒤"}이에요.`)
+        : "영상이나 음성을 보다가 모르는 문장의 별을 누르면 여기로 모여요.";
+      $("#rvMore").hidden = !left;
+      return;
+    }
+    const p = S.packs[c.packId];
+    $("#rvSource").textContent = p ? p.title : "삭제된 팩";
+    $("#rvCount").textContent = `${RV.i + 1} / ${RV.queue.length}`;
+    $("#rvEn").textContent = c.en; $("#rvKo").textContent = c.ko || "";
+    const n = $("#rvNote"); n.hidden = !c.note; n.textContent = c.note || "";
+    $("#rvBack").hidden = true; $("#rvGrades").hidden = true; $("#rvReveal").hidden = false;
+    $("#rvHint").textContent = p ? "들어 보고 무슨 뜻인지 떠올려 보세요" : "원래 음성이 없어요. 기계 음성으로 들어 보세요";
+    $("#rvListen").hidden = !p;
+    $("#rvYtWrap").hidden = !(p && p.media.kind === "youtube");
+  }
+  function playClip() {
+    const c = RV.queue[RV.i]; if (!c) return;
+    const p = S.packs[c.packId];
+    if (!p) { tts(c.en); return; }
+    playSegment(p, c.t, c.e, "rvYtHost", "rvYtWrap");
+  }
+  function tts(text) {
+    if (!("speechSynthesis" in window)) { toast("이 브라우저는 기계 음성을 지원하지 않아요."); return; }
+    speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "en-US"; u.rate = S.set.rate; speechSynthesis.speak(u);
+  }
+  $("#rvListen").onclick = playClip;
+  $("#rvTts").onclick = () => { const c = RV.queue[RV.i]; if (c) tts(c.en); };
+  $("#rvReveal").onclick = () => { $("#rvBack").hidden = false; $("#rvGrades").hidden = false; $("#rvReveal").hidden = true; };
+  $("#rvGrades").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    const c = RV.queue[RV.i]; if (!c) return;
+    const g = b.dataset.g, t = TODAY();
+    if (g === "again") { c.box = 1; c.due = addDays(t, 1); }
+    else if (g === "hard") { c.box = Math.max(1, c.box); c.due = addDays(t, INTERVALS[c.box]); }
+    else { c.box = Math.min(5, c.box + 1); c.due = addDays(t, INTERVALS[c.box]); }
+    c.last = g; saveCards();
+    const d = day(); d.reviews += 1; addXP(3);
+    if (d.reviews === GOAL_REVIEWS) toast("오늘 복습 목표 달성!");
+    RV.i += 1; renderReview();
+    if (RV.queue[RV.i]) setTimeout(playClip, 250);
+  });
+  $("#rvMore").onclick = () => { startReview(); setTimeout(playClip, 250); };
+
+  // ---------- speaking: 5-second answers (A) and work-situation drills (B) ----------
+  const SK_LEN = 10, SK_SECONDS = 5;
+  let skPack = "all";
+  const SK = { mode: "A", items: [], i: 0, shownAt: 0, onsetMs: null, timer: 0, revealed: false };
+
+  // A: sentences from packs the learner has watched (bookmarked first); B: the pack's work-situation drills
+  function speakItems(mode) {
+    const packs = Object.values(S.packs).filter((p) => skPack === "all" || p.id === skPack);
+    const out = [];
+    packs.forEach((p) => {
+      if (mode === "A") {
+        const seen = seenOf(p.id);
+        p.lines.forEach((l, i) => {
+          const marked = !!S.cards[cardId(p.id, i)];
+          if (!l.ko || (!seen[i] && !marked)) return;
+          out.push({ key: `${p.id}~${i}`, pack: p, ko: l.ko, en: l.en, t: l.t, e: l.e, hint: l.note, marked });
+        });
+      } else {
+        p.speak.forEach((s, k) => out.push({ key: `${p.id}#${k}`, pack: p, ko: s.ko, en: s.en, hint: s.frame, line: s.line, marked: false }));
+      }
+    });
+    // never practised, then missed, then slow, then the rest; bookmarked sentences go first within each group
+    const rank = (it) => { const r = S.speak[it.key]; if (!r) return 0; if (r.last === "miss") return 1; if (r.last === "slow") return 2; return 3; };
+    return out.sort((a, b) => rank(a) - rank(b) || (b.marked - a.marked) || ((S.speak[a.key] || {}).at || 0) - ((S.speak[b.key] || {}).at || 0));
+  }
+  function renderSpeak() {
+    const f = $("#skFilters"); f.textContent = "";
+    const usable = Object.values(S.packs).filter((p) => p.speak.length || Object.keys(seenOf(p.id)).length);
+    if (skPack !== "all" && !S.packs[skPack]) skPack = "all";
+    [{ id: "all", title: "전체" }].concat(usable).forEach((p) => {
+      const b = el("button", "", p.title); b.type = "button"; b.setAttribute("aria-pressed", String(skPack === p.id));
+      b.onclick = () => { skPack = p.id; renderSpeak(); }; f.append(b);
+    });
+    const a = speakItems("A").length, b = speakItems("B").length;
+    $("#modeACnt").textContent = a; $("#modeBCnt").textContent = b;
+    $("#modeA").disabled = !a; $("#modeB").disabled = !b;
+    if (!a) $("#modeAText").textContent = "영상을 보거나 문장을 북마크하면 그 문장으로 연습할 수 있어요.";
+    else $("#modeAText").textContent = "본 영상의 문장을 한국어로 보고 영어로 바로 말하기. 정답은 원래 목소리로 들려줘요.";
+    if (!b) $("#modeBText").textContent = "말하기 문제가 들어 있는 팩을 가져오면 열려요. 앞으로 만드는 팩에는 모두 들어가요.";
+    else $("#modeBText").textContent = "영상의 핵심 표현을 내 업무 상황에 넣어 말하기. 같은 틀을 여러 번 써서 입에 붙여요.";
+    $("#tSilent").setAttribute("aria-pressed", String(!!S.set.silent));
+    const dvn = Math.min(DV_LEN, a + b);
+    $("#modeCCnt").textContent = dvn; $("#modeC").disabled = !dvn;
+    const dq = talkQuestions().length;
+    $("#modeDCnt").textContent = S.talks.length; $("#modeD").disabled = !dq;
+    if (!dq) $("#modeDText").textContent = "영상을 하나 보고 나면 그 내용에 대한 질문으로 30초 동안 말해 볼 수 있어요.";
+    const logs = Object.values(S.speak), today = (S.p.days[TODAY()] || {}).spoken || 0;
+    const tried = logs.reduce((n, r) => n + r.n, 0), good = logs.reduce((n, r) => n + r.good, 0);
+    const fast = logs.map((r) => r.ms).filter((x) => x != null);
+    const avg = fast.length ? (fast.reduce((s, x) => s + x, 0) / fast.length / 1000).toFixed(1) + "초" : "–";
+    const facts = $("#skFacts"); facts.textContent = "";
+    [["오늘 말한 문장", `${today}개`], ["지금까지", `${tried}번`], ["바로 나온 비율", tried ? `${Math.round(good / tried * 100)}%` : "–"], ["말 시작까지 평균", avg]].forEach(([k, v]) => {
+      const r = el("div"); r.append(el("span", "muted", k), el("b", "", v)); facts.append(r);
+    });
+  }
+  $("#modeA").onclick = () => open("speakrun", "A");
+  $("#modeB").onclick = () => open("speakrun", "B");
+  $("#tSilent").onclick = () => { S.set.silent = !S.set.silent; save("settings", S.set); renderSpeak(); toast(S.set.silent ? "속으로 말하기: 녹음 없이 정답을 확인해요" : "소리 내어 말하기: 녹음하고 비교해요"); };
+
+  // microphone: record each answer and detect when the voice starts (reaction time)
+  const Rec = { stream: null, mr: null, chunks: [], url: null, ctx: null, raf: 0, onsetAt: null };
+  async function micReady() {
+    if (Rec.stream) return true;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return false;
+    try { Rec.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); return true; }
+    catch (e) { return false; }
+  }
+  function recStart() {
+    Rec.chunks = []; Rec.onsetAt = null;
+    Rec.mr = new MediaRecorder(Rec.stream);
+    Rec.mr.ondataavailable = (e) => { if (e.data.size) Rec.chunks.push(e.data); };
+    Rec.mr.start();
+    try {
+      Rec.ctx = Rec.ctx || new (window.AudioContext || window.webkitAudioContext)();
+      const an = Rec.ctx.createAnalyser(); an.fftSize = 1024;
+      Rec.ctx.createMediaStreamSource(Rec.stream).connect(an);
+      const buf = new Float32Array(an.fftSize), bar = $("#skLevel");
+      const loop = () => {
+        an.getFloatTimeDomainData(buf);
+        let s = 0; for (let k = 0; k < buf.length; k++) s += buf[k] * buf[k];
+        const rms = Math.sqrt(s / buf.length);
+        bar.style.width = Math.min(100, rms * 900) + "%";
+        if (rms > 0.035 && Rec.onsetAt == null) Rec.onsetAt = performance.now();
+        Rec.raf = requestAnimationFrame(loop);
+      };
+      loop();
+    } catch (e) { /* level meter is optional */ }
+  }
+  function recStop() {
+    cancelAnimationFrame(Rec.raf);
+    return new Promise((res) => {
+      if (!Rec.mr || Rec.mr.state === "inactive") return res(null);
+      Rec.mr.onstop = () => {
+        if (Rec.url) URL.revokeObjectURL(Rec.url);
+        Rec.url = Rec.chunks.length ? URL.createObjectURL(new Blob(Rec.chunks, { type: Rec.mr.mimeType })) : null;
+        res(Rec.url);
+      };
+      Rec.mr.stop();
+    });
+  }
+  function micOff() {
+    cancelAnimationFrame(Rec.raf);
+    try { if (Rec.mr && Rec.mr.state !== "inactive") Rec.mr.stop(); } catch (e) {}
+    if (Rec.stream) Rec.stream.getTracks().forEach((t) => t.stop());
+    Rec.stream = null;
+  }
+
+  function startSpeak(mode) {
+    SK.mode = mode; SK.items = speakItems(mode).slice(0, SK_LEN); SK.i = 0;
+    $("#topTitle").textContent = mode === "A" ? "5초 즉답" : "내 상황으로 말하기";
+    showPrompt();
+  }
+  async function showPrompt() {
+    stopClip(); clearTimeout(SK.timer);
+    const it = SK.items[SK.i];
+    $("#skDone").hidden = !!it; document.querySelector(".sk-card").hidden = !it;
+    if (!it) { finishSpeak(); return; }
+    SK.revealed = false; SK.onsetMs = null;
+    $("#skSource").textContent = it.pack.title;
+    $("#skCount").textContent = `${SK.i + 1} / ${SK.items.length}`;
+    $("#skKind").textContent = SK.mode === "A" ? (it.marked ? "북마크한 문장 · 영어로 말해 보세요" : "영어로 말해 보세요") : "이 상황을 영어로 말해 보세요";
+    $("#skKo").textContent = it.ko;
+    $("#skHint").hidden = true; $("#skHint").textContent = it.hint ? `힌트: ${it.hint}` : "";
+    $("#skHintBtn").hidden = !it.hint;
+    $("#skAnswer").hidden = true; $("#skYtWrap").hidden = true;
+    const tw = $("#skTimerWrap"); tw.classList.remove("run", "over"); void tw.offsetWidth; tw.classList.add("run");
+    SK.timer = setTimeout(() => { tw.classList.add("over"); }, SK_SECONDS * 1000);
+    SK.shownAt = performance.now();
+    const silent = !!S.set.silent || !(await micReady());
+    if (!S.set.silent && silent && SK.i === 0) toast("마이크를 쓸 수 없어 속으로 말하기로 진행해요");
+    SK.silent = silent;
+    $("#skRec").hidden = silent; $("#skReveal").hidden = !silent;
+    $("#skMine").hidden = silent;
+    if (!silent) { $("#skMic").classList.remove("idle"); $("#skRecText").textContent = "듣고 있어요. 다 말하면 마이크를 누르세요."; recStart(); }
+  }
+  async function reveal() {
+    if (SK.revealed) return; SK.revealed = true;
+    clearTimeout(SK.timer); $("#skTimerWrap").classList.remove("run");
+    const it = SK.items[SK.i];
+    if (!SK.silent) {
+      await recStop();
+      SK.onsetMs = Rec.onsetAt != null ? Math.max(0, Rec.onsetAt - SK.shownAt) : null;
+      $("#skMic").classList.add("idle"); $("#skRecText").textContent = "녹음했어요.";
+    }
+    $("#skRec").hidden = true; $("#skReveal").hidden = true;
+    $("#skOnset").innerHTML = "";
+    if (SK.onsetMs != null) { $("#skOnset").append("말 시작까지 "); $("#skOnset").append(el("b", "", `${(SK.onsetMs / 1000).toFixed(1)}초`)); }
+    else if (!SK.silent) $("#skOnset").textContent = "목소리가 잘 안 들렸어요. 다음엔 조금 더 크게 말해 보세요.";
+    $("#skEn").textContent = it.en;
+    $("#skModelLbl").textContent = SK.mode === "A" ? "원어민 음성" : "모범 답 듣기";
+    $("#skAnswer").hidden = false;
+    playModel();
+  }
+  function playModel() {
+    const it = SK.items[SK.i]; if (!it) return;
+    if (SK.mode === "A" && it.t != null) playSegment(it.pack, it.t, it.e, "skYtHost", "skYtWrap");
+    else tts(it.en);
+  }
+  $("#skMic").onclick = reveal;
+  $("#skReveal").onclick = reveal;
+  $("#skHintBtn").onclick = () => { $("#skHint").hidden = false; $("#skHintBtn").hidden = true; };
+  $("#skModel").onclick = playModel;
+  $("#skMine").onclick = () => { if (!Rec.url) return; stopClip(); const a = $("#skAudio"); a.src = Rec.url; a.play().catch(() => {}); };
+  document.querySelectorAll("[data-sg]").forEach((b) => {
+    b.onclick = () => {
+      const it = SK.items[SK.i]; if (!it || !SK.revealed) return;
+      const g = b.dataset.sg;
+      const r = S.speak[it.key] = Object.assign({ n: 0, good: 0, slow: 0, miss: 0, ms: null }, S.speak[it.key] || {});
+      r.n += 1; r[g] += 1; r.last = g; r.at = Date.now();
+      if (g === "good" && SK.onsetMs != null) r.ms = r.ms == null ? Math.round(SK.onsetMs) : Math.min(r.ms, Math.round(SK.onsetMs));
+      save("speak", S.speak);
+      const d = day(); d.spoken += 1; addXP(g === "good" ? 3 : 2, "", true);
+      if (d.spoken === GOAL_SPOKEN) toast("오늘 말하기 목표 달성!");
+      SK.i += 1; showPrompt();
+    };
+  });
+  function finishSpeak() {
+    micOff();
+    const keys = SK.items.map((it) => it.key);
+    const good = keys.filter((k) => S.speak[k] && S.speak[k].last === "good").length;
+    $("#skDoneTitle").textContent = SK.items.length ? `${SK.items.length}문장 끝` : "연습할 문장이 없어요";
+    $("#skDoneText").textContent = SK.items.length
+      ? `바로 나온 문장 ${good}개. 못 한 문장은 다음 연습에 먼저 나와요.`
+      : "영상을 보거나 말하기 문제가 있는 팩을 가져온 뒤 다시 와 주세요.";
+    $("#skAgain").hidden = !SK.items.length;
+  }
+  $("#skAgain").onclick = () => startSpeak(SK.mode);
+
+  // ---------- C: driving mode (hands-free: Korean prompt -> beep -> think -> English answer) ----------
+  const DV_LEN = 15;
+  const DV = { items: [], i: 0, run: 0, playing: false };
+  S.set.dv = Object.assign({ src: "mix", gap: "6", reps: "1" }, S.set.dv || {});
+  let dvWake = null;
+  function driveItems() {
+    const a = S.set.dv.src !== "B" ? speakItems("A") : [];
+    const b = S.set.dv.src !== "A" ? speakItems("B") : [];
+    const out = [];
+    while (out.length < DV_LEN && (a.length || b.length)) {   // alternate the two kinds when mixing
+      if (a.length) out.push(a.shift());
+      if (b.length && out.length < DV_LEN) out.push(b.shift());
+    }
+    return out;
+  }
+  function speakP(text, lang, rate) {
+    return new Promise((res) => {
+      if (!("speechSynthesis" in window)) return res(false);
+      const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.rate = rate || 1;
+      const v = speechSynthesis.getVoices().find((x) => x.lang && x.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+      if (v) u.voice = v;
+      let done = false; const end = (ok) => { if (!done) { done = true; res(ok); } };
+      u.onend = () => end(true); u.onerror = () => end(false);
+      setTimeout(() => end(false), Math.max(4000, text.length * 160 / (rate || 1)));   // some webviews never fire onend
+      speechSynthesis.speak(u);
+    });
+  }
+  function beep() {
+    try {
+      Rec.ctx = Rec.ctx || new (window.AudioContext || window.webkitAudioContext)();
+      const o = Rec.ctx.createOscillator(), g = Rec.ctx.createGain();
+      o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(Rec.ctx.destination);
+      o.start(); g.gain.exponentialRampToValueAtTime(0.0001, Rec.ctx.currentTime + 0.25); o.stop(Rec.ctx.currentTime + 0.26);
+    } catch (e) { /* the pause still works without the cue */ }
+  }
+  function renderDrive(phase) {
+    const it = DV.items[DV.i];
+    $("#dvCount").textContent = `${Math.min(DV.i + 1, DV.items.length)} / ${DV.items.length}`;
+    const segs = $("#dvSegs"); segs.textContent = "";
+    DV.items.forEach((_, k) => segs.append(el("i", k === DV.i ? "cur" : k < DV.i ? "done" : "")));
+    $("#dvSrc").textContent = it ? it.pack.title : "";
+    $("#dvKo").textContent = it ? it.ko : (DV.items.length ? "끝까지 들었어요. 수고했어요!" : "연습할 문장이 없어요. 영상을 보거나 말하기 문제가 있는 팩을 가져와 주세요.");
+    $("#dvEn").textContent = it && (phase === "en") ? it.en : "";
+    $("#dvPhase").textContent = { ko: "한국어 듣는 중", think: "영어로 말해 보세요", en: "정답", idle: DV.playing ? "" : "재생을 누르면 시작해요" }[phase || "idle"] || "";
+    $("#dvPlayIcon").innerHTML = DV.playing ? '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
+    $("#dvPlay").setAttribute("aria-label", DV.playing ? "일시정지" : "재생");
+    document.querySelectorAll("[data-dv]").forEach((g) => g.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === S.set.dv[g.dataset.dv]))));
+  }
+  function openDrive() {
+    driveStop(); DV.items = driveItems(); DV.i = 0;
+    $("#dvYtWrap").hidden = true;
+    renderDrive("idle");
+  }
+  async function playAnswer(it, id) {
+    if (SK_MODE_LINE(it) && it.pack.media.kind === "audio") {
+      playSegment(it.pack, it.t, it.e, "dvYtHost", "dvYtWrap");
+      await wait(((it.e - it.t) * 1000) / (S.set.rate || 1) + 400);
+    } else if (SK_MODE_LINE(it) && document.visibilityState === "visible") {
+      playSegment(it.pack, it.t, it.e, "dvYtHost", "dvYtWrap");   // YouTube needs the player on screen
+      await wait(((it.e - it.t) * 1000) / (S.set.rate || 1) + 900);
+    } else {
+      await speakP(it.en, "en-US", S.set.rate || 1);
+    }
+    return id === DV.run;
+  }
+  const SK_MODE_LINE = (it) => it.t != null;   // sentences from the video have timings; work-situation drills don't
+  async function drivePlay() {
+    if (!DV.items.length) return;
+    if (DV.i >= DV.items.length) DV.i = 0;
+    const id = ++DV.run; DV.playing = true; driveWake(true); setDriveSession();
+    while (DV.i < DV.items.length) {
+      const it = DV.items[DV.i];
+      if (!SK_MODE_LINE(it) || it.pack.media.kind !== "youtube") $("#dvYtWrap").hidden = true;
+      renderDrive("ko");
+      await speakP(it.ko, "ko-KR", 1);
+      if (id !== DV.run) return;
+      beep(); renderDrive("think");
+      await wait(Number(S.set.dv.gap) * 1000);
+      if (id !== DV.run) return;
+      renderDrive("en");
+      for (let r = 0; r < Number(S.set.dv.reps); r++) {
+        if (!(await playAnswer(it, id))) return;
+        await wait(600);
+        if (id !== DV.run) return;
+      }
+      const d = day(); d.spoken += 1; addXP(2, "", true);
+      if (d.spoken === GOAL_SPOKEN) toast("오늘 말하기 목표 달성!");
+      DV.i += 1;
+      await wait(700);
+      if (id !== DV.run) return;
+    }
+    DV.playing = false; driveWake(false); renderDrive("idle");
+  }
+  function driveStop() {
+    DV.run++; DV.playing = false;
+    try { speechSynthesis.cancel(); } catch (e) {}
+    stopClip(); driveWake(false);
+  }
+  async function driveWake(on) {
+    try {
+      if (on && !dvWake && navigator.wakeLock) { dvWake = await navigator.wakeLock.request("screen"); dvWake.addEventListener("release", () => { dvWake = null; }); }
+      if (!on && dvWake) { await dvWake.release(); dvWake = null; }
+    } catch (e) { dvWake = null; }
+  }
+  // steering-wheel / Bluetooth buttons
+  function setDriveSession() {
+    if (!("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: "운전 모드", artist: "출퇴근 영어", artwork: [{ src: "icons/icon-512.png", sizes: "512x512", type: "image/png" }] });
+      navigator.mediaSession.setActionHandler("play", () => { if (!DV.playing) drivePlay(); });
+      navigator.mediaSession.setActionHandler("pause", () => { driveStop(); renderDrive("idle"); });
+      navigator.mediaSession.setActionHandler("nexttrack", () => driveJump(1));
+      navigator.mediaSession.setActionHandler("previoustrack", () => driveJump(-1));
+    } catch (e) { /* optional */ }
+  }
+  function driveJump(delta) {
+    const was = DV.playing; driveStop();
+    DV.i = Math.max(0, Math.min(DV.items.length - 1, DV.i + delta));
+    renderDrive("idle");
+    if (was) drivePlay();
+  }
+  $("#dvPlay").onclick = () => { if (DV.playing) { driveStop(); renderDrive("idle"); } else drivePlay(); };
+  $("#dvPrev").onclick = () => driveJump(-1);
+  $("#dvNext").onclick = () => driveJump(1);
+  document.querySelectorAll("[data-dv]").forEach((g) => g.addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    S.set.dv[g.dataset.dv] = b.dataset.v; save("settings", S.set);
+    if (g.dataset.dv === "src") openDrive(); else renderDrive(DV.playing ? undefined : "idle");
+  }));
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && DV.playing) driveWake(true); });
+  $("#modeC").onclick = () => open("drive");
+
+  // ---------- D: 30-second talk ----------
+  const TALK_GENERIC = [
+    { en: "Summarize this video in your own words.", ko: "이 영상 내용을 내 말로 요약해 보세요." },
+    { en: "What was the most useful expression for you, and when would you use it at work?", ko: "가장 쓸모 있던 표현은 무엇이고, 회사에서 언제 쓸 수 있을까요?" },
+    { en: "Do you agree with the speaker? Why or why not?", ko: "말한 사람의 생각에 동의하나요? 이유는요?" },
+    { en: "Tell me about a time at work that is related to this topic.", ko: "이 주제와 관련된 회사 경험을 이야기해 보세요." }
+  ];
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const TK = { qs: [], qi: 0, running: false, startAt: 0, tick: 0, stt: null, sttBroken: false, secs: 0, usedRec: false };
+  function talkQuestions() {
+    return Object.values(S.packs).filter((p) => pctOf(p) > 0)
+      .flatMap((p) => (p.talkQs.length ? p.talkQs : TALK_GENERIC).map((q) => ({ en: q.en, ko: q.ko, pack: p })));
+  }
+  function renderTalk(newQ) {
+    TK.qs = talkQuestions();
+    if (!TK.qs.length) { $("#tkQ").textContent = "먼저 영상을 하나 보고 오세요."; $("#tkQko").textContent = ""; $("#tkStart").disabled = true; renderTalkList(); return; }
+    $("#tkStart").disabled = false;
+    if (newQ || TK.qi >= TK.qs.length) {
+      const asked = new Set(S.talks.slice(-12).map((t) => t.q + t.packId));
+      const fresh = TK.qs.map((q, k) => k).filter((k) => !asked.has(TK.qs[k].en + TK.qs[k].pack.id));
+      const pool = fresh.length ? fresh : TK.qs.map((q, k) => k);
+      TK.qi = pool[Math.floor(Math.random() * pool.length)];
+    }
+    const q = TK.qs[TK.qi];
+    $("#tkSource").textContent = q.pack.title;
+    $("#tkQ").textContent = q.en; $("#tkQko").textContent = q.ko;
+    $("#tkText").value = ""; $("#tkMine").hidden = true; $("#tkSec").textContent = "0초"; $("#tkSec").classList.remove("over");
+    $("#tkTimerWrap").classList.remove("run30", "over");
+    $("#tkHow").textContent = SR && !TK.sttBroken
+      ? "말하기 시작을 누르고 30초 정도 영어로 말해 보세요. 말한 내용을 자동으로 받아 적어요."
+      : "말하기 시작을 누르면 녹음돼요. 내가 한 말은 아래 칸을 누르고 키보드의 마이크 버튼으로 받아 적어 주세요.";
+    setTalkBtn(false);
+    renderTalkList();
+  }
+  function setTalkBtn(on) {
+    $("#tkStart").querySelector("span").textContent = on ? "그만 말하기" : "말하기 시작";
+    $("#tkStart").classList.toggle("primary", !on);
+  }
+  async function talkStart() {
+    if (TK.running) { talkStop(); return; }
+    TK.running = true; TK.secs = 0; TK.usedRec = false; setTalkBtn(true);
+    const tw = $("#tkTimerWrap"); tw.classList.remove("run30", "over"); void tw.offsetWidth; tw.classList.add("run30");
+    TK.startAt = Date.now();
+    TK.tick = setInterval(() => {
+      TK.secs = Math.round((Date.now() - TK.startAt) / 1000);
+      $("#tkSec").textContent = `${TK.secs}초`; $("#tkSec").classList.toggle("over", TK.secs >= 30);
+      if (TK.secs >= 90) talkStop();
+    }, 250);
+    if (SR && !TK.sttBroken) {
+      const r = new SR(); r.lang = "en-US"; r.continuous = true; r.interimResults = true;
+      let finalTxt = $("#tkText").value.trim() ? $("#tkText").value.trim() + " " : "";
+      r.onresult = (e) => {
+        let interim = "";
+        for (let k = e.resultIndex; k < e.results.length; k++) {
+          const t = e.results[k][0].transcript;
+          if (e.results[k].isFinal) finalTxt += t.trim() + " "; else interim += t;
+        }
+        $("#tkText").value = (finalTxt + interim).trim();
+      };
+      r.onerror = (e) => {
+        if (["not-allowed", "service-not-allowed", "network", "audio-capture"].includes(e.error)) {
+          TK.sttBroken = true; toast("자동 받아쓰기를 쓸 수 없어요. 키보드 마이크로 받아 적어 주세요");
+          $("#tkHow").textContent = "아래 칸을 누르고 키보드의 마이크 버튼으로 말해 주세요.";
+        }
+      };
+      r.onend = () => { if (TK.running && !TK.sttBroken) { try { r.start(); } catch (err) {} } };
+      try { r.start(); TK.stt = r; } catch (e) { TK.sttBroken = true; }
+    }
+    if (!TK.stt && await micReady()) { recStart(); TK.usedRec = true; }
+  }
+  async function talkStop() {
+    if (!TK.running) return;
+    TK.running = false; clearInterval(TK.tick); setTalkBtn(false);
+    $("#tkTimerWrap").classList.remove("run30");
+    if (TK.stt) { try { TK.stt.stop(); } catch (e) {} TK.stt = null; }
+    if (TK.usedRec) { await recStop(); micOff(); $("#tkMine").hidden = !Rec.url; }
+    $("#tkText").focus();
+  }
+  $("#tkStart").onclick = talkStart;
+  $("#tkOther").onclick = () => { if (TK.running) talkStop(); renderTalk(true); };
+  $("#tkMine").onclick = () => { if (Rec.url) { const a = $("#tkAudio"); a.src = Rec.url; a.play().catch(() => {}); } };
+  $("#tkSave").onclick = () => {
+    if (TK.running) talkStop();
+    const text = $("#tkText").value.trim();
+    if (!text) { toast("내가 한 말을 적어 주세요. 키보드 마이크로 받아 적어도 돼요"); $("#tkText").focus(); return; }
+    const q = TK.qs[TK.qi];
+    S.talks.push({ id: "t" + Date.now(), packId: q.pack.id, title: q.pack.title, q: q.en, qko: q.ko, text, secs: TK.secs, at: Date.now() });
+    if (S.talks.length > 200) S.talks = S.talks.slice(-200);
+    save("talks", S.talks);
+    const d = day(); d.spoken += 3; addXP(6, "", true);
+    toast("저장했어요. 북마크 탭의 Claude에게 묻기에서 피드백을 받아요");
+    renderTalk(true);
+  };
+  function renderTalkList() {
+    const box = $("#tkList"); box.textContent = "";
+    const recent = S.talks.slice(-5).reverse();
+    box.hidden = !recent.length;
+    if (!recent.length) return;
+    box.append(el("b", "", "최근 30초 말하기"));
+    recent.forEach((t) => {
+      const it = el("div", "talk-item");
+      it.append(el("b", "", t.q), el("span", "", t.text.length > 120 ? t.text.slice(0, 120) + "…" : t.text));
+      box.append(it);
+    });
+  }
+
+  // ---------- ask Claude: notes + 30-second talks as one prompt ----------
+  const akSel = { notes: new Set(), talks: new Set() };
+  const akNotesList = () => Object.values(S.cards).filter((c) => c.memo).sort((a, b) => (b.memoAt || 0) - (a.memoAt || 0));
+  const akTalksList = () => S.talks.slice().reverse();
+  let aboutTimer = 0;
+  $("#akAbout").addEventListener("input", () => {
+    clearTimeout(aboutTimer);
+    aboutTimer = setTimeout(() => { S.set.about = $("#akAbout").value.trim(); save("settings", S.set); updatePreview(); }, 300);
+  });
+  function initAsk() {
+    $("#akAbout").value = S.set.about || "";
+    akSel.notes = new Set(akNotesList().map((c) => c.id));
+    akSel.talks = new Set(akTalksList().map((t) => t.id));
+    renderAsk();
+  }
+  function renderAsk() {
+    const fill = (box, items, set, row) => {
+      box.textContent = "";
+      if (!items.length) { box.append(el("p", "muted small", box.id === "akNotes" ? "아직 노트를 단 북마크가 없어요. 북마크 문장을 열고 노트·질문을 눌러 보세요." : "아직 저장한 30초 말하기가 없어요. 말하기 탭에서 해 보세요.")); return; }
+      items.forEach((it) => {
+        const lab = el("label", "ak-item");
+        const cb = el("input"); cb.type = "checkbox"; cb.checked = set.has(it.id);
+        cb.onchange = () => { if (cb.checked) set.add(it.id); else set.delete(it.id); updatePreview(); };
+        const txt = el("span"); row(txt, it);
+        lab.append(cb, txt); box.append(lab);
+      });
+    };
+    fill($("#akNotes"), akNotesList(), akSel.notes, (t, c) => {
+      t.append(el("div", "en", c.en), el("div", "sub", c.ko || ""), el("div", "memo", "노트: " + c.memo));
+    });
+    fill($("#akTalks"), akTalksList(), akSel.talks, (t, x) => {
+      t.append(el("div", "en", x.q), el("div", "sub", x.text.length > 100 ? x.text.slice(0, 100) + "…" : x.text));
+    });
+    updatePreview();
+  }
+  function askText() {
+    const notes = akNotesList().filter((c) => akSel.notes.has(c.id));
+    const talks = akTalksList().filter((t) => akSel.talks.has(t.id));
+    if (!notes.length && !talks.length) return "";
+    // the learner's own introduction lives only in this phone's settings, never in the code
+    const about = (S.set.about || "").trim() || "나는 영어 말하기를 연습하는 한국인 학습자야.";
+    const L = ["[출퇴근 영어 · 질문과 피드백 요청]", about + " 한국어로 답해 줘.", ""];
+    if (notes.length) {
+      L.push("■ 북마크한 문장에 대한 내 질문과 메모 (각각 답해 줘. 메모만 있으면 그 표현에서 알아두면 좋은 점을 설명해 줘)");
+      notes.forEach((c, k) => {
+        const p = S.packs[c.packId];
+        L.push(`${k + 1}. "${c.en}"`);
+        if (c.ko) L.push(`   뜻: ${c.ko}`);
+        if (p) L.push(`   출처: ${p.title}`);
+        L.push(`   내 질문/메모: ${c.memo}`);
+      });
+      L.push("");
+    }
+    if (talks.length) {
+      L.push("■ 30초 말하기 피드백 (각각 이 순서로: ① 내가 한 말을 한국어로 정리 ② 자연스러운지 평가 ③ 어색한 문장은 더 나은 표현과 이유 ④ 전체를 다듬은 모범 답안)");
+      talks.forEach((t, k) => {
+        L.push(`${k + 1}. 질문: ${t.q}${t.qko ? ` (${t.qko})` : ""}`);
+        L.push(`   관련 영상: ${t.title}`);
+        L.push(`   내가 한 말 (음성 인식이라 오타가 있을 수 있어): "${t.text}"`);
+      });
+    }
+    return L.join("\n");
+  }
+  function updatePreview() {
+    const txt = askText();
+    $("#akPreview").value = txt;
+    const n = akSel.notes.size + akSel.talks.size;
+    $("#akCopy").disabled = !txt;
+    $("#akCopy").querySelector("span").textContent = n ? `${n}개 골라서 복사하기` : "보낼 것을 골라 주세요";
+  }
+  $("#akAllNotes").onclick = () => { akNotesList().forEach((c) => akSel.notes.add(c.id)); renderAsk(); };
+  $("#akAllTalks").onclick = () => { akTalksList().forEach((t) => akSel.talks.add(t.id)); renderAsk(); };
+  $("#akCopy").onclick = async () => {
+    const txt = askText(); if (!txt) return;
+    if (!(await copyOut(txt))) { toast("복사하지 못했어요. 아래 미리 보기 글을 길게 눌러 복사해 주세요"); $("#akPreview").closest("details").open = true; return; }
+    toast("복사했어요. Claude 앱에 붙여넣으세요");
+  };
+  $("#askOpen").onclick = () => open("ask");
+  $("#modeD").onclick = () => open("talk");
+
+  // ---------- bookmarks tab ----------
+  const GONE = "__gone__";   // bookmarks whose pack was deleted
+  const bookmarksOf = (packId) => Object.values(S.cards)
+    .filter((c) => (packId === GONE ? !S.packs[c.packId] : c.packId === packId))
+    .sort((a, b) => a.t - b.t);
+  function renderSaved() {
+    const due = Object.values(S.cards).filter((c) => c.due <= TODAY()).length;
+    const total = Object.keys(S.cards).length;
+    $("#dueTitle").textContent = due ? `오늘 복습할 문장 ${due}개` : "오늘 복습할 문장이 없어요";
+    $("#dueText").textContent = due ? "원래 음성을 듣고 뜻을 떠올리는 복습이에요." : total ? "알았던 문장은 3일, 7일, 14일 뒤에 다시 나와요." : "영상을 보다가 별을 누르면 여기로 모여요.";
+    $("#startReview").hidden = !due;
+    const nNotes = Object.values(S.cards).filter((c) => c.memo).length, nTalks = S.talks.length;
+    $("#askText").textContent = nNotes || nTalks
+      ? `노트 ${nNotes}개 · 30초 말하기 ${nTalks}개`
+      : "북마크 노트와 30초 말하기를 복사해서 Claude 앱에 붙여넣어요";
+    $("#savedTotal").textContent = total ? `북마크 ${total}개` : "";
+    const list = $("#watchedList"); list.textContent = "";
+    const opened = S.p.opened || {};
+    const packs = Object.values(S.packs)
+      .filter((p) => bookmarksOf(p.id).length || Object.keys(seenOf(p.id)).length)
+      .sort((a, b) => (opened[b.id] || 0) - (opened[a.id] || 0));
+    if (!packs.length && !bookmarksOf(GONE).length) {
+      list.append(el("p", "muted", "아직 본 콘텐츠가 없어요. 홈에서 콘텐츠를 골라 보세요."));
+      return;
+    }
+    packs.forEach((p) => {
+      const n = bookmarksOf(p.id).length, yt = p.media.kind === "youtube";
+      const b = el("button", "pack"); b.type = "button";
+      const ic = el("span", "ic" + (yt ? "" : " audio")); ic.append(icon(yt ? "video" : "audio"));
+      const mid = el("span"); mid.style.minWidth = "0";
+      mid.append(el("div", "t", p.title), statsLine(p));
+      const cnt = el("span", "pct", String(n)); cnt.setAttribute("aria-hidden", "true");
+      b.append(ic, mid, cnt);
+      b.onclick = () => open("savedpack", p.id);
+      list.append(b);
+    });
+    const gone = bookmarksOf(GONE).length;
+    if (gone) {
+      const b = el("button", "pack"); b.type = "button";
+      const ic = el("span", "ic"); ic.append(icon("trash"));
+      const mid = el("span"); mid.append(el("div", "t", "삭제한 콘텐츠의 북마크"), el("div", "s", `북마크 ${gone}개 · 원래 음성 없음`));
+      b.append(ic, mid, el("span", "pct", String(gone)));
+      b.onclick = () => open("savedpack", GONE);
+      list.append(b);
+    }
+  }
+  let spPack = null, spShowAll = false;
+  function renderSavedPack(id) {
+    spPack = id;
+    const p = S.packs[id];
+    $("#topTitle").textContent = p ? p.title : "삭제한 콘텐츠";
+    $("#spYtWrap").hidden = true;
+    $("#spOpen").hidden = !p;
+    $("#spShowAll").setAttribute("aria-pressed", String(spShowAll));
+    const items = bookmarksOf(id);
+    $("#spCount").textContent = `북마크 ${items.length}개`;
+    const ol = $("#spList"); ol.textContent = "";
+    if (!items.length) { ol.append(el("li", "muted", "아직 북마크한 문장이 없어요. 이 콘텐츠를 보다가 모르는 문장의 별을 눌러 보세요.")); return; }
+    items.forEach((c) => {
+      const li = el("li", "bm" + (spShowAll ? " open" : ""));
+      const face = el("button", "bm-face"); face.type = "button";
+      face.append(el("span", "ko", c.ko || c.en));
+      const back = el("span", "en-wrap");
+      back.append(el("span", "en", c.en));
+      if (c.note) back.append(el("span", "note", c.note));
+      face.append(back);
+      if (c.memo) face.append(el("span", "memo-tag", "노트: " + c.memo));
+      const st0 = p && p.lines[c.i] && p.lines[c.i].en === c.en ? p.lines[c.i].study : null;
+      const studyRow = el("div", "bm-actions");
+      let studyWrap = null;
+      if (st0) {
+        const sb = el("button", "study-btn small"); sb.type = "button"; sb.append(icon("book"), el("span", "", "문장 분석"));
+        studyWrap = el("div", "bm-study"); studyWrap.hidden = true;
+        sb.onclick = () => {
+          studyWrap.hidden = !studyWrap.hidden;
+          if (!studyWrap.hidden && !studyWrap.firstChild) studyWrap.append(studyView(st0));
+          sb.querySelector("span").textContent = studyWrap.hidden ? "문장 분석" : "분석 닫기";
+          if (!studyWrap.hidden) { li.classList.add("open"); face.setAttribute("aria-expanded", "true"); }
+        };
+        studyRow.append(sb);
+      }
+      // a personal note or question on the sentence, later copied to Claude from "Claude에게 묻기"
+      const nb = el("button", "study-btn small"); nb.type = "button"; nb.append(icon("chat"), el("span", "", c.memo ? "노트 고치기" : "노트·질문"));
+      const memoBox = el("div", "memo-edit"); memoBox.hidden = true;
+      const ta = el("textarea"); ta.rows = 3; ta.value = c.memo || ""; ta.placeholder = "궁금한 점이나 메모. 예: get to랑 get used to는 뭐가 달라?";
+      ta.setAttribute("aria-label", "노트");
+      const saveB = el("button", "btn small primary", "노트 저장"); saveB.type = "button";
+      saveB.onclick = () => {
+        const v = ta.value.trim();
+        if (v !== (c.memo || "")) { c.memo = v; c.memoAt = Date.now(); saveCards(); }
+        toast(v ? "노트를 저장했어요. Claude에게 묻기에서 보낼 수 있어요" : "노트를 지웠어요");
+        renderSavedPack(id);
+      };
+      memoBox.append(ta, saveB);
+      nb.onclick = () => { memoBox.hidden = !memoBox.hidden; if (!memoBox.hidden) { li.classList.add("open"); ta.focus(); } };
+      studyRow.prepend(nb);
+      if (!c.ko) li.classList.add("open");
+      face.setAttribute("aria-expanded", String(li.classList.contains("open")));
+      face.onclick = () => { li.classList.toggle("open"); face.setAttribute("aria-expanded", String(li.classList.contains("open"))); };
+      const side = el("div", "bm-side");
+      const sp = el("button", "speak"); sp.type = "button"; sp.setAttribute("aria-label", "원래 음성 듣기: " + c.en); sp.append(icon("sound"));
+      sp.onclick = () => { if (p) playSegment(p, c.t, c.e, "spYtHost", "spYtWrap"); else tts(c.en); };
+      const st = el("button", "unstar"); st.type = "button"; st.setAttribute("aria-label", "북마크 해제: " + c.en); st.append(icon("star"));
+      st.onclick = () => {
+        if (!st.classList.contains("confirm")) { st.classList.add("confirm"); toast("한 번 더 누르면 북마크가 해제돼요"); setTimeout(() => st.classList.remove("confirm"), 2500); return; }
+        delete S.cards[c.id]; saveCards(); renderSavedPack(id); renderChrome();
+      };
+      side.append(sp, st);
+      li.append(face, side);
+      li.append(studyRow, memoBox);
+      if (studyWrap) li.append(studyWrap);
+      ol.append(li);
+    });
+  }
+  $("#spShowAll").onclick = () => { spShowAll = !spShowAll; renderSavedPack(spPack); };
+  $("#spOpen").onclick = () => { if (S.packs[spPack]) openPack(spPack); };
+  $("#startReview").onclick = () => open("review");
+  $("#exportBtn").onclick = () => {
+    const blob = new Blob([JSON.stringify({ type: "ce-backup", v: 1, at: new Date().toISOString(), progress: S.p, cards: S.cards, settings: S.set, speak: S.speak, talks: S.talks })], { type: "application/json" });
+    const a = el("a"); a.href = URL.createObjectURL(blob); a.download = `출퇴근영어-백업-${TODAY()}.json`; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  $("#restoreFile").addEventListener("change", async (e) => {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    try {
+      const o = JSON.parse(await f.text());
+      if (o.type !== "ce-backup") throw new Error();
+      S.p = o.progress; S.cards = o.cards; S.set = Object.assign(S.set, o.settings || {});
+      S.speak = o.speak || S.speak; S.talks = Array.isArray(o.talks) ? o.talks : S.talks;
+      saveP(); saveCards(); save("settings", S.set); save("speak", S.speak); save("talks", S.talks); toast("백업을 불러왔어요"); renderSaved(); renderChrome();
+    } catch (err) { toast("백업 파일이 아니거나 손상됐어요."); }
+  });
+
+  // ---------- home ----------
+  function renderChrome() {
+    $("#topStreak").textContent = displayStreak();
+    $("#topXp").textContent = `${S.p.xp} XP`;
+    const due = Object.values(S.cards).filter((c) => c.due <= TODAY()).length;
+    const b = $("#dueBadge"); b.hidden = !due; b.textContent = due > 99 ? "99+" : due;
+  }
+  function renderHome() {
+    const d = Object.assign({ lines: 0, reviews: 0, spoken: 0 }, S.p.days[TODAY()] || {});
+    $("#gSpoken").textContent = `${Math.min(d.spoken, GOAL_SPOKEN)} / ${GOAL_SPOKEN}`;
+    $("#gSpokenBar").style.width = Math.min(100, d.spoken / GOAL_SPOKEN * 100) + "%";
+    $("#gLines").textContent = `${Math.min(d.lines, GOAL_LINES)} / ${GOAL_LINES}`;
+    $("#gLinesBar").style.width = Math.min(100, d.lines / GOAL_LINES * 100) + "%";
+    $("#gReviews").textContent = `${Math.min(d.reviews, GOAL_REVIEWS)} / ${GOAL_REVIEWS}`;
+    $("#gReviewsBar").style.width = Math.min(100, d.reviews / GOAL_REVIEWS * 100) + "%";
+    const st = displayStreak();
+    $("#streakText").textContent = st ? `${st}일 연속 학습 중 · 최고 ${S.p.best}일` : "오늘 한 문장만 들어도 연속 기록이 시작돼요";
+    const c = S.p.cont && S.packs[S.p.cont.id];
+    $("#resume").hidden = !c;
+    if (c) { $("#resumeTitle").textContent = c.title; $("#resumePct").textContent = pctOf(c) + "%"; }
+    renderInterests();
+    const recos = recommend(), cands = candidates();
+    $("#recoBox").hidden = !S.set.topics || (!recos.length && !cands.length);
+    if (recoOffset >= recos.length) recoOffset = 0;
+    if (candOffset >= cands.length) candOffset = 0;
+    const rl = $("#recoList"); rl.textContent = "";
+    recos.slice(recoOffset, recoOffset + 3).forEach((r) => rl.append(packCard(r.p, r.reasons, true)));
+    if (!recos.length) rl.append(el("p", "muted small", "가져온 콘텐츠를 모두 봤어요. 아래 새 영상 후보에서 골라 팩을 요청해 보세요."));
+    $("#recoMore").hidden = recos.length <= 3 && cands.length <= 3;
+    $("#candBox").hidden = !cands.length;
+    const cl = $("#candList"); cl.textContent = "";
+    cands.slice(candOffset, candOffset + 3).forEach((c) => cl.append(candCard(c)));
+    const list = $("#packList"); list.textContent = "";
+    const packs = Object.values(S.packs);
+    if (!packs.length) { list.append(emptyPacks()); return; }
+    packs.sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).forEach((p) => list.append(packCard(p, null, false)));
+  }
+  function emptyPacks() {
+    const box = el("div", "panel empty-packs");
+    box.append(el("b", "", "아직 콘텐츠가 없어요"));
+    const ol = el("ol", "steps-sm");
+    ["위의 팩 가져오기를 누르세요.", "파일 선택 창에서 OneDrive → EnglishApp → packs 폴더로 가세요.", "추천-로 시작하는 묶음 파일을 고르면 여러 팩이 한 번에 들어와요."].forEach((t) => ol.append(el("li", "", t)));
+    box.append(ol, el("p", "muted small", "새 영상이 보고 싶으면 YouTube 링크를 Claude 앱 → Code에서 PC 세션에 보내 팩을 만들어 달라고 하세요."));
+    return box;
+  }
+  function packCard(p, reasons, reco) {
+    const b = el("button", "pack" + (reco ? " reco" : "")); b.type = "button";
+    const yt = p.media.kind === "youtube";
+    const ic = el("span", "ic" + (yt ? "" : " audio")); ic.append(icon(yt ? "video" : "audio"));
+    const mid = el("span"); mid.style.minWidth = "0";
+    const pct = pctOf(p), saved = Object.values(S.cards).filter((x) => x.packId === p.id).length;
+    const lv = lvNum(p.level);
+    mid.append(el("div", "t", p.title), el("div", "s", [yt ? "영상" : "음성", lv != null ? lvName(lv) : "", p.meta.minutes ? `${Math.round(p.meta.minutes)}분` : `${p.lines.length}문장`, p.author].filter(Boolean).join(" · ")));
+    if (reasons && reasons.length) {
+      const rs = el("div", "reasons");
+      reasons.slice(0, 3).forEach((r) => rs.append(el("span", "chip" + (r.fit ? " fit" : ""), r.t || r)));
+      mid.append(rs);
+    } else {
+      mid.append(statsLine(p));
+      const bar = el("div", "bar mini"), fill = el("div"); fill.style.width = pct + "%"; bar.append(fill); mid.append(bar);
+    }
+    b.append(ic, mid, el("span", "pct", pct + "%"));
+    b.onclick = () => openPack(p.id);
+    return b;
+  }
+
+  // ---------- interests & recommendations ----------
+  function recommend() {
+    const topics = S.set.topics || DEFAULT_TOPICS, target = S.set.target, week = 7 * 864e5;
+    return Object.values(S.packs).map((p) => {
+      const pct = pctOf(p);
+      if (pct >= 90) return null;
+      let score = 0; const reasons = [];
+      const hit = p.meta.topics.filter((t) => topics.includes(t));
+      if (hit.length) { score += 3; reasons.push(TOPICS[hit[0]]); }
+      const lv = lvNum(p.level);
+      if (lv != null) {
+        const d = lv - target;
+        if (Math.abs(d) <= 0.5) { score += 2; reasons.push({ t: "내 수준에 맞음", fit: true }); }
+        else if (d > 0.5 && d <= 1.5) { score += 1; reasons.push("조금 도전"); }
+        else if (d < -0.5) { score += 0.5; reasons.push("편하게 듣기"); }
+        else score -= 1;
+      }
+      if (p.meta.minutes && p.meta.minutes <= 8) { score += 1; reasons.push(`${Math.round(p.meta.minutes)}분 · 출근길용`); }
+      if (pct > 0) { score += 1.5; reasons.unshift("보던 중"); }
+      if (!p.builtin && Date.now() - new Date(p.addedAt).getTime() < week) { score += 0.5; reasons.push("새로 들어옴"); }
+      return { p, score, reasons };
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+  }
+  let recoOffset = 0, candOffset = 0;
+  $("#recoMore").onclick = () => { recoOffset += 3; candOffset += 3; renderHome(); };
+  function candidates() {
+    const topics = S.set.topics || DEFAULT_TOPICS;
+    return Object.values(S.cand)
+      .filter((c) => !c.hidden && !S.packs["yt-" + c.id] && (!c.topic || topics.includes(c.topic)))
+      .sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+  }
+  const fmtDur = (s) => (s <= 60 ? "쇼츠" : `${Math.floor(s / 60)}분`);
+  function candCard(c) {
+    const box = el("div", "cand");
+    const head = el("div");
+    head.append(el("div", "t", c.title), el("div", "s", [c.channel, fmtDur(c.duration), TOPICS[c.topic]].filter(Boolean).join(" · ")));
+    const row = el("div", "row");
+    const req = el("button", "btn small primary", "팩 요청 복사"); req.type = "button";
+    req.onclick = () => copyText(`이 영상으로 팩 만들어줘 (주제: ${TOPICS[c.topic] || "기타"}) https://youtu.be/${c.id}`, "복사했어요. Claude 앱 → Code에서 이 PC 세션에 붙여넣으세요.");
+    const yt = el("a", "btn small", "YouTube에서 보기"); yt.href = `https://youtu.be/${c.id}`; yt.target = "_blank"; yt.rel = "noopener";
+    const hide = el("button", "link", "관심 없음"); hide.type = "button";
+    hide.onclick = () => { c.hidden = true; save("candidates", S.cand); renderHome(); };
+    row.append(req, yt);
+    box.append(head, row, hide);
+    return box;
+  }
+  // resolves true when the text reached the clipboard
+  function copyOut(text) {
+    const fallback = () => {
+      const ta = el("textarea"); ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.append(ta); ta.select();
+      let ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+      ta.remove(); return ok;
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(() => true, fallback);
+    return Promise.resolve(fallback());
+  }
+  function copyText(text, okMsg) { copyOut(text).then((ok) => toast(ok ? okMsg : "복사하지 못했어요: " + text)); }
+  let draftTopics = null;
+  function renderInterests() {
+    const show = !S.set.topics || draftTopics;
+    $("#interestPanel").hidden = !show;
+    if (!show) return;
+    if (!draftTopics) draftTopics = (S.set.topics || DEFAULT_TOPICS).slice();
+    const box = $("#topicChips"); box.textContent = "";
+    Object.entries(TOPICS).forEach(([id, label]) => {
+      const b = el("button", "", label); b.type = "button"; b.setAttribute("aria-pressed", String(draftTopics.includes(id)));
+      b.onclick = () => { draftTopics = draftTopics.includes(id) ? draftTopics.filter((x) => x !== id) : draftTopics.concat(id); renderInterests(); };
+      box.append(b);
+    });
+    document.querySelectorAll("#levelSeg button").forEach((b) => b.setAttribute("aria-pressed", String(Math.abs(+b.dataset.lv - S.set.target) < 0.45)));
+  }
+  document.querySelectorAll("#levelSeg button").forEach((b) => { b.onclick = () => { S.set.target = +b.dataset.lv; renderInterests(); }; });
+  $("#interestDone").onclick = () => {
+    if (!draftTopics || !draftTopics.length) { toast("주제를 하나 이상 골라 주세요."); return; }
+    S.set.topics = draftTopics; draftTopics = null; save("settings", S.set); renderHome(); toast("관심 주제에 맞춰 추천할게요");
+  };
+  $("#editInterests").onclick = () => { draftTopics = (S.set.topics || DEFAULT_TOPICS).slice(); renderHome(); $("#interestPanel").scrollIntoView({ block: "start", behavior: "smooth" }); };
+
+  // ---------- rating after finishing a pack ----------
+  function checkRating() {
+    const p = P.pack; if (!p) return;
+    $("#ratePanel").hidden = !(pctOf(p) >= 90 && !S.set.rated[p.id]);
+  }
+  document.querySelectorAll("[data-rate-v]").forEach((b) => {
+    b.onclick = () => {
+      const p = P.pack; if (!p) return;
+      const v = b.dataset.rateV;
+      const unknown = p.lines.filter((_, i) => S.cards[cardId(p.id, i)]).length / p.lines.length;
+      const lv = lvNum(p.level); const base = lv == null ? S.set.target : lv;
+      // where this pack says the learner is comfortable, nudged by how many sentences were unknown
+      const est = base + (v === "easy" ? 0.6 : v === "hard" ? -0.6 : 0) + (unknown < 0.08 ? 0.3 : unknown > 0.25 ? -0.3 : 0);
+      let next = S.set.target * 0.7 + est * 0.3;
+      if (v === "easy") next = Math.max(S.set.target, next);   // "easy" never makes later picks easier
+      if (v === "hard") next = Math.min(S.set.target, next);   // "hard" never makes them harder
+      S.set.target = Math.min(4, Math.max(1, Math.round(next * 100) / 100));
+      S.set.rated[p.id] = v; save("settings", S.set);
+      $("#ratePanel").hidden = true; addXP(5);
+      toast(`고마워요. 다음 추천은 ${lvName(S.set.target)} 수준 위주로 할게요`);
+    };
+  });
+
+  // ---------- delete imported pack ----------
+  $("#deletePack").onclick = async () => {
+    const btn = $("#deletePack"), p = P.pack; if (!p || p.builtin) return;
+    if (!btn.dataset.confirm) { btn.dataset.confirm = "1"; btn.textContent = "한 번 더 누르면 삭제돼요 (카드는 남아요)"; setTimeout(() => { delete btn.dataset.confirm; btn.textContent = "이 팩 삭제"; }, 3000); return; }
+    try { await idb.del(p.id); } catch (e) { toast("삭제하지 못했어요."); return; }
+    delete S.packs[p.id]; if (S.p.cont && S.p.cont.id === p.id) { S.p.cont = null; saveP(); }
+    delete btn.dataset.confirm; btn.textContent = "이 팩 삭제";
+    toast(`"${p.title}" 팩을 삭제했어요`); go("home");
+  };
+  $("#resume").onclick = () => { if (S.p.cont) openPack(S.p.cont.id); };
+
+  // ---------- navigation ----------
+  const TITLES = { home: "출퇴근 영어", saved: "북마크", review: "복습", speak: "말하기", talk: "30초 말하기", ask: "Claude에게 묻기", drive: "운전 모드" };
+  const NAV = { tab: "home", stack: [] };
+  let current = "home";
+  function show(name, arg) {
+    if (current === "player" && name !== "player") { exitFs(); M.pause(); clearInterval(P.timer); }
+    if (current === "speakrun" && name !== "speakrun") { clearTimeout(SK.timer); micOff(); }
+    if (current === "talk" && name !== "talk") talkStop();
+    if (current === "drive" && name !== "drive") driveStop();
+    if (current !== name || name === "savedpack") stopClip();
+    current = name;
+    document.querySelectorAll(".view").forEach((v) => { v.hidden = v.id !== "v-" + name; });
+    $("#backBtn").hidden = !NAV.stack.length;
+    if (TITLES[name]) $("#topTitle").textContent = TITLES[name];
+    document.querySelectorAll(".tabs button").forEach((b) => { if (b.dataset.tab === NAV.tab) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); });
+    if (name === "home") renderHome();
+    if (name === "saved") renderSaved();
+    if (name === "speak") renderSpeak();
+    if (name === "speakrun") startSpeak(arg);
+    if (name === "talk") renderTalk(true);
+    if (name === "drive") openDrive();
+    if (name === "ask") initAsk();
+    if (name === "savedpack") renderSavedPack(arg);
+    if (name === "review") { startReview(); if (RV.queue.length) setTimeout(playClip, 300); }
+    renderChrome(); window.scrollTo(0, 0);
+  }
+  function go(tab) { NAV.tab = tab; NAV.stack = []; show(tab); }
+  function open(name, arg) {
+    const top = NAV.stack[NAV.stack.length - 1];
+    if (top && top.name === name) top.arg = arg; else NAV.stack.push({ name, arg });
+    show(name, arg);
+  }
+  function back() {
+    NAV.stack.pop();
+    const top = NAV.stack[NAV.stack.length - 1];
+    if (!top) { show(NAV.tab); return; }
+    if (top.name === "player") { NAV.stack.pop(); openPack(top.arg); return; }
+    show(top.name, top.arg);
+  }
+  document.querySelectorAll(".tabs button").forEach((b) => { b.onclick = () => go(b.dataset.tab); });
+  $("#backBtn").onclick = back;
+
+  // ---------- boot ----------
+  renderChrome(); renderHome();
+  loadPacks().then(renderHome);
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch((e) => console.warn("sw", e));
+})();

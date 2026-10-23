@@ -1,0 +1,17 @@
+{
+  "name": "출퇴근 영어",
+  "short_name": "출퇴근 영어",
+  "description": "영상과 음성으로 문장을 듣고, 모르는 문장만 골라 복습하는 영어 앱",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef0fb",
+  "theme_color": "#4f46e5",
+  "lang": "ko",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
