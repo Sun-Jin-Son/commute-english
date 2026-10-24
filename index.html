@@ -29,6 +29,8 @@
   <symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 14a8 8 0 0 1 16 0"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></symbol>
   <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+  <symbol id="i-slides" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8 20h8M7 12l3-3 2 2 4-4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></symbol>
   <symbol id="i-car" viewBox="0 0 24 24"><path d="M5 16h14v-4l-2-5H7l-2 5zM5 16v3M19 16v3M5 12h14"/><circle cx="8" cy="14" r=".6"/><circle cx="16" cy="14" r=".6"/></symbol>
   <symbol id="i-chat" viewBox="0 0 24 24"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-5 4V6a1 1 0 0 1 1-1z"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/></symbol>
@@ -93,12 +95,11 @@
       <span class="resume-pct" id="resumePct"></span>
     </button>
 
-    <div class="sec-title"><h2>전체 콘텐츠</h2>
+    <div class="sec-title"><h2>전체 콘텐츠 <button class="link" type="button" id="manageOpen">관리</button></h2>
       <label class="btn small" for="importFile"><svg class="i"><use href="#i-import"/></svg>팩 가져오기</label>
       <input type="file" id="importFile" accept=".json,application/json" hidden>
     </div>
     <div class="packs" id="packList"><p class="muted">콘텐츠를 불러오는 중...</p></div>
-    <p class="muted small">새 팩은 PC의 Claude Code에 YouTube 링크나 발표 자료를 주면 만들어 OneDrive <b>EnglishApp/packs</b> 폴더에 넣어 줍니다. 여기서 <b>팩 가져오기</b>로 고르세요.</p>
   </section>
 
   <!-- PLAYER -->
@@ -106,6 +107,7 @@
     <div class="stagebox" id="stageBox">
       <div class="media" id="mediaBox">
         <div class="yt-wrap" id="ytWrap" hidden><div id="ytHost"></div></div>
+        <div class="slide-wrap" id="slideWrap" hidden><img id="slideImg" alt=""></div>
         <div class="audio-stage" id="audioStage" hidden>
           <span class="ic"><svg class="i"><use href="#i-audio"/></svg></span>
           <div><b id="audioTitle"></b><small id="audioSub"></small></div>
@@ -237,6 +239,27 @@
       <p class="muted" id="skDoneText"></p>
       <button class="btn primary" type="button" id="skAgain">한 번 더</button>
     </div>
+  </section>
+
+  <!-- FOLDER -->
+  <section class="view" id="v-folder" hidden>
+    <button class="resume" type="button" id="fdNext" hidden>
+      <span class="ic"><svg class="i"><use href="#i-next"/></svg></span>
+      <span class="resume-txt"><small>다음에 볼 것</small><b id="fdNextTitle"></b></span>
+      <span class="resume-pct"></span>
+    </button>
+    <div class="packs" id="fdList"></div>
+    <button class="link danger" type="button" id="fdDelete" hidden></button>
+  </section>
+
+  <!-- PACK MANAGER -->
+  <section class="view" id="v-manage" hidden>
+    <div class="panel">
+      <b id="mgUsage">저장 공간 확인 중…</b>
+      <p class="muted small">팩을 가져오면 앱 안에 복사돼요. 다운로드 폴더의 원본 파일은 지워도 괜찮아요. 여기서 지운 팩은 앱에서만 사라지고, 그 팩에서 북마크한 문장과 노트는 남아요.</p>
+    </div>
+    <ul class="mglist" id="mgList"></ul>
+    <datalist id="folderNames"></datalist>
   </section>
 
   <!-- DRIVING MODE -->

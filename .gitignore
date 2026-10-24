@@ -1,0 +1,9 @@
+# Only the program goes to GitHub. Content packs (translations, study notes, audio)
+# stay private in OneDrive EnglishApp/packs and are imported on the phone.
+packs/
+*.json
+!manifest.webmanifest
+_test*
+*.ogg
+*.mp3
+*.wav

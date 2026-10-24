@@ -123,11 +123,12 @@
     if (!o || o.type !== "ce-pack") throw new Error("출퇴근 영어 팩 파일이 아니에요.");
     const m = o.media || {};
     if (m.kind === "youtube" && !/^[A-Za-z0-9_-]{6,20}$/.test(m.id || "")) throw new Error("YouTube 영상 정보가 잘못됐어요.");
-    if (m.kind === "audio" && !m.src && !m.data && !m.blob) throw new Error("팩에 음성 파일이 없어요.");
-    if (m.kind !== "youtube" && m.kind !== "audio") throw new Error("지원하지 않는 형식의 팩이에요.");
+    if ((m.kind === "audio" || m.kind === "slides") && !m.src && !m.data && !m.blob) throw new Error("팩에 음성 파일이 없어요.");
+    if (m.kind === "slides" && !(Array.isArray(m.slides) && m.slides.length) && !(Array.isArray(m.slideBlobs) && m.slideBlobs.length)) throw new Error("발표 팩에 슬라이드가 없어요.");
+    if (m.kind !== "youtube" && m.kind !== "audio" && m.kind !== "slides") throw new Error("지원하지 않는 형식의 팩이에요.");
     const lines = (Array.isArray(o.lines) ? o.lines : [])
       .filter((l) => l && typeof l.en === "string" && l.en.trim() && Number.isFinite(+l.t))
-      .map((l) => ({ t: +l.t, e: Number.isFinite(+l.e) ? +l.e : +l.t + 4, en: l.en.trim(), ko: (l.ko || "").trim(), note: (l.note || "").trim(), who: l.who || "", study: normStudy(l.study) }))
+      .map((l) => ({ t: +l.t, e: Number.isFinite(+l.e) ? +l.e : +l.t + 4, en: l.en.trim(), ko: (l.ko || "").trim(), note: (l.note || "").trim(), who: l.who || "", study: normStudy(l.study), slide: Number.isInteger(l.slide) ? l.slide : null }))
       .sort((a, b) => a.t - b.t);
     if (!lines.length) throw new Error("팩에 문장이 없어요.");
     const id = String(o.id || "").replace(/[^A-Za-z0-9_.-]/g, "-") || "pack-" + Date.now();
@@ -139,7 +140,11 @@
     const minutes = Number(meta.minutes) || Math.round((lines[lines.length - 1].e - lines[0].t) / 6) / 10;
     return {
       id, title: String(o.title || "제목 없음"), author: String(o.author || ""), level: String(o.level || ""),
-      tags: Array.isArray(o.tags) ? o.tags.map(String) : [], meta: { topics, minutes, url: meta.url || "", shorts: !!meta.shorts },
+      tags: Array.isArray(o.tags) ? o.tags.map(String) : [],
+      meta: {
+        topics, minutes, url: meta.url || "", shorts: !!meta.shorts,
+        series: meta.series && typeof meta.series.title === "string" ? { title: meta.series.title.trim(), order: Number(meta.series.order) || 0 } : null
+      },
       media: m, lines, speak, addedAt: o.addedAt || new Date().toISOString(),
       talkQs: (Array.isArray(o.talk) ? o.talk : []).filter((q) => q && typeof q.en === "string" && q.en.trim()).map((q) => ({ en: q.en.trim(), ko: typeof q.ko === "string" ? q.ko.trim() : "" }))
     };
@@ -154,9 +159,12 @@
   }
   async function storePack(o) {
     const p = normPack(o);
-    if (p.media.kind === "audio" && p.media.data) {
-      try { p.media = { kind: "audio", blob: await fetch(p.media.data).then((r) => r.blob()) }; }
-      catch (e) { throw new Error("팩 안의 음성 파일이 손상됐어요."); }
+    if ((p.media.kind === "audio" || p.media.kind === "slides") && p.media.data) {
+      try {
+        const media = { kind: p.media.kind, blob: await fetch(p.media.data).then((r) => r.blob()) };
+        if (p.media.kind === "slides") media.slideBlobs = await Promise.all(p.media.slides.map((u) => fetch(u).then((r) => r.blob())));
+        p.media = media;
+      } catch (e) { throw new Error("팩 안의 음성이나 슬라이드 파일이 손상됐어요."); }
     }
     if (S.packs[p.id]) p.addedAt = S.packs[p.id].addedAt;
     try { await idb.put(p); } catch (e) { throw new Error("저장 공간이 부족해서 팩을 저장하지 못했어요."); }
@@ -164,8 +172,16 @@
     return p;
   }
   async function importPackFile(file) {
-    let o;
-    try { o = JSON.parse(await file.text()); } catch (e) { toast("파일을 읽지 못했어요. 팩 파일(.json)이 맞는지 확인해 주세요."); return; }
+    let o, raw = "";
+    try { raw = await file.text(); o = JSON.parse(raw); }
+    catch (e) {
+      // cloud pickers blocked by company policy hand over an empty file or an HTML notice instead of the pack
+      const blocked = !raw.trim() || raw.trim().startsWith("<");
+      toast(blocked
+        ? "파일 내용을 받지 못했어요. 회사 OneDrive 정책 때문일 수 있어요. 파일을 휴대폰 다운로드 폴더에 저장한 뒤 거기서 골라 주세요."
+        : "파일을 읽지 못했어요. 팩 파일(.json)이 맞는지 확인해 주세요.");
+      return;
+    }
     try {
       if (o && o.type === "ce-bundle" && Array.isArray(o.packs)) {
         let ok = 0;
@@ -184,6 +200,17 @@
   }
   $("#importFile").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) importPackFile(f); });
   const mediaUrl = (p) => p.media.src || (p.media.blob ? (p._url || (p._url = URL.createObjectURL(p.media.blob))) : "");
+  const slideUrl = (p, k) => {
+    const blobs = p.media.slideBlobs || [];
+    if (!blobs.length) return "";
+    p._slides = p._slides || [];
+    const i = Math.max(0, Math.min(blobs.length - 1, k || 0));
+    return p._slides[i] || (p._slides[i] = URL.createObjectURL(blobs[i]));
+  };
+  const isTimedAudio = (p) => p.media.kind === "audio" || p.media.kind === "slides";
+  const KIND = { youtube: { label: "영상", icon: "video", cls: "" }, audio: { label: "음성", icon: "audio", cls: " audio" }, slides: { label: "발표", icon: "slides", cls: " slides" } };
+  const kindOf = (p) => KIND[p.media.kind] || KIND.audio;
+  const kindIcon = (p) => { const k = kindOf(p), s = el("span", "ic" + k.cls); s.append(icon(k.icon)); return s; };
   const seenOf = (id) => (S.p.seen[id] = S.p.seen[id] || {});
   const pctOf = (p) => Math.round(Object.keys(seenOf(p.id)).length / p.lines.length * 100);
   const marksOf = (p) => p.lines.reduce((n, _, i) => n + (S.cards[`${p.id}~${i}`] ? 1 : 0), 0);
@@ -246,9 +273,10 @@
     $("#credit").textContent = p.author ? `출처: ${p.author}` : "";
     $("#deletePack").hidden = !!p.builtin;
     checkRating();
-    const yt = p.media.kind === "youtube";
-    $("#ytWrap").hidden = !yt; $("#audioStage").hidden = yt;
+    const yt = p.media.kind === "youtube", deck = p.media.kind === "slides";
+    $("#ytWrap").hidden = !yt; $("#audioStage").hidden = yt || deck; $("#slideWrap").hidden = !deck;
     $("#ytWrap").classList.toggle("vertical", !!p.meta.shorts);
+    if (deck) $("#slideImg").src = slideUrl(p, 0);
     if (yt) {
       M.kind = "yt";
       try {
@@ -307,11 +335,19 @@
     const ko = $("#lineKo"); ko.classList.toggle("shown", S.set.showKo); ko.firstChild.textContent = S.set.showKo ? (l.ko || "뜻이 없는 문장이에요") : "뜻 보기";
     const n = $("#lineNote"); n.hidden = !(S.set.showKo && l.note); n.textContent = l.note;
     renderStudy();
+    if (P.pack.media.kind === "slides" && l.slide != null) {   // the slide follows the sentence being spoken
+      const src = slideUrl(P.pack, l.slide);
+      if ($("#slideImg").getAttribute("src") !== src) $("#slideImg").src = src;
+    }
     const saved = !!S.cards[cardId(P.pack.id, i)];
     $("#cSave").setAttribute("aria-pressed", String(saved)); $("#saveLbl").textContent = saved ? "북마크됨" : "북마크";
     document.querySelectorAll("#script .sline").forEach((li, k) => { li.classList.toggle("cur", k === i); });
-    const cur = document.querySelector(`#script .sline[data-i="${i}"]`);
-    if (cur && fromPlayback) cur.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    // follow the current line inside the script box only; never move the page itself
+    const cur = document.querySelector(`#script .sline[data-i="${i}"]`), box = $("#script");
+    if (cur && fromPlayback && box.scrollHeight > box.clientHeight) {
+      const top = cur.offsetTop - box.clientHeight / 3;   // .script is position: relative, so offsetTop is already box-relative
+      box.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+    }
     if ("mediaSession" in navigator && M.kind === "audio") navigator.mediaSession.metadata && (navigator.mediaSession.metadata.artist = l.en);
     updateFs();
   }
@@ -348,7 +384,7 @@
   async function enterFs() {
     if (!P.pack) return;
     fsOn = true; fsKoOpen = false;
-    stageBox.classList.add("fs"); stageBox.classList.toggle("audio", M.kind === "audio");
+    stageBox.classList.add("fs"); stageBox.classList.toggle("audio", P.pack.media.kind === "audio");
     $("#fsSub").hidden = false; document.body.style.overflow = "hidden";
     updateFs(); renderPlayBtn();
     try {
@@ -379,9 +415,11 @@
   }
   $("#lineKo").onclick = () => {
     if (!P.pack || P.idx < 0) return;
-    const l = P.pack.lines[P.idx], ko = $("#lineKo");
-    ko.classList.add("shown"); ko.firstChild.textContent = l.ko || "뜻이 없는 문장이에요";
-    const n = $("#lineNote"); n.hidden = !l.note; n.textContent = l.note;
+    const l = P.pack.lines[P.idx], ko = $("#lineKo"), n = $("#lineNote");
+    const show = !ko.classList.contains("shown");   // each tap toggles the meaning
+    ko.classList.toggle("shown", show);
+    ko.firstChild.textContent = show ? (l.ko || "뜻이 없는 문장이에요") : "뜻 보기";
+    n.hidden = !(show && l.note); n.textContent = l.note;
   };
   $("#cPlay").onclick = () => {
     if (!P.pack) return;
@@ -805,7 +843,7 @@
     renderDrive("idle");
   }
   async function playAnswer(it, id) {
-    if (SK_MODE_LINE(it) && it.pack.media.kind === "audio") {
+    if (SK_MODE_LINE(it) && isTimedAudio(it.pack)) {
       playSegment(it.pack, it.t, it.e, "dvYtHost", "dvYtWrap");
       await wait(((it.e - it.t) * 1000) / (S.set.rate || 1) + 400);
     } else if (SK_MODE_LINE(it) && document.visibilityState === "visible") {
@@ -1095,9 +1133,9 @@
       return;
     }
     packs.forEach((p) => {
-      const n = bookmarksOf(p.id).length, yt = p.media.kind === "youtube";
+      const n = bookmarksOf(p.id).length;
       const b = el("button", "pack"); b.type = "button";
-      const ic = el("span", "ic" + (yt ? "" : " audio")); ic.append(icon(yt ? "video" : "audio"));
+      const ic = kindIcon(p);
       const mid = el("span"); mid.style.minWidth = "0";
       mid.append(el("div", "t", p.title), statsLine(p));
       const cnt = el("span", "pct", String(n)); cnt.setAttribute("aria-hidden", "true");
@@ -1237,7 +1275,9 @@
     const list = $("#packList"); list.textContent = "";
     const packs = Object.values(S.packs);
     if (!packs.length) { list.append(emptyPacks()); return; }
-    packs.sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).forEach((p) => list.append(packCard(p, null, false)));
+    const fs = folders();
+    Object.keys(fs).sort().forEach((name) => list.append(folderCard(name, fs[name])));
+    packs.filter((p) => !folderOf(p)).sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).forEach((p) => list.append(packCard(p, null, false)));
   }
   function emptyPacks() {
     const box = el("div", "panel empty-packs");
@@ -1249,12 +1289,11 @@
   }
   function packCard(p, reasons, reco) {
     const b = el("button", "pack" + (reco ? " reco" : "")); b.type = "button";
-    const yt = p.media.kind === "youtube";
-    const ic = el("span", "ic" + (yt ? "" : " audio")); ic.append(icon(yt ? "video" : "audio"));
+    const ic = kindIcon(p);
     const mid = el("span"); mid.style.minWidth = "0";
-    const pct = pctOf(p), saved = Object.values(S.cards).filter((x) => x.packId === p.id).length;
+    const pct = pctOf(p);
     const lv = lvNum(p.level);
-    mid.append(el("div", "t", p.title), el("div", "s", [yt ? "영상" : "음성", lv != null ? lvName(lv) : "", p.meta.minutes ? `${Math.round(p.meta.minutes)}분` : `${p.lines.length}문장`, p.author].filter(Boolean).join(" · ")));
+    mid.append(el("div", "t", p.title), el("div", "s", [kindOf(p).label, lv != null ? lvName(lv) : "", p.meta.minutes ? `${Math.round(p.meta.minutes)}분` : `${p.lines.length}문장`, p.author].filter(Boolean).join(" · ")));
     if (reasons && reasons.length) {
       const rs = el("div", "reasons");
       reasons.slice(0, 3).forEach((r) => rs.append(el("span", "chip" + (r.fit ? " fit" : ""), r.t || r)));
@@ -1268,12 +1307,61 @@
     return b;
   }
 
+  // ---------- folders: a pack's series from the pack maker, or a folder the learner set ----------
+  const folderOf = (p) => ((S.set.packFolder || {})[p.id] ?? (p.meta.series ? p.meta.series.title : "")) || "";
+  const folderOrder = (a, b) => ((a.meta.series && a.meta.series.order) || 0) - ((b.meta.series && b.meta.series.order) || 0) || (a.addedAt < b.addedAt ? -1 : 1);
+  function folders() {
+    const m = {};
+    Object.values(S.packs).forEach((p) => { const f = folderOf(p); if (f) (m[f] = m[f] || []).push(p); });
+    Object.values(m).forEach((list) => list.sort(folderOrder));
+    return m;
+  }
+  function setFolder(p, name) {
+    S.set.packFolder = S.set.packFolder || {};
+    const v = name.trim();
+    // empty means "no folder", even for a pack whose maker put it in a series
+    S.set.packFolder[p.id] = v;
+    save("settings", S.set);
+  }
+  function folderCard(name, list) {
+    const b = el("button", "pack folder"); b.type = "button";
+    const ic = el("span", "ic"); ic.append(icon("folder"));
+    const mid = el("span"); mid.style.minWidth = "0";
+    const seen = list.reduce((n, p) => n + Object.keys(seenOf(p.id)).length, 0), total = list.reduce((n, p) => n + p.lines.length, 0);
+    const done = list.filter((p) => pctOf(p) >= 90).length;
+    mid.append(el("div", "t", name), el("div", "s", `팩 ${list.length}개 · 다 본 팩 ${done}개`));
+    const bar = el("div", "bar mini"), fill = el("div"); fill.style.width = (total ? Math.round(seen / total * 100) : 0) + "%"; bar.append(fill); mid.append(bar);
+    b.append(ic, mid, el("span", "pct", (total ? Math.round(seen / total * 100) : 0) + "%"));
+    b.onclick = () => open("folder", name);
+    return b;
+  }
+  function renderFolder(name) {
+    const list = folders()[name] || [];
+    $("#topTitle").textContent = name;
+    const box = $("#fdList"); box.textContent = "";
+    if (!list.length) { box.append(el("p", "muted small", "이 폴더에 팩이 없어요.")); $("#fdNext").hidden = true; $("#fdDelete").hidden = true; return; }
+    const next = list.find((p) => pctOf(p) < 90);
+    $("#fdNext").hidden = !next;
+    if (next) { $("#fdNextTitle").textContent = next.title; $("#fdNext").onclick = () => openPack(next.id); }
+    list.forEach((p) => box.append(packCard(p, null, false)));
+    $("#fdDelete").hidden = false;
+    const del = $("#fdDelete"); del.textContent = `폴더의 팩 ${list.length}개 모두 삭제`; delete del.dataset.confirm;
+    del.onclick = async () => {
+      if (!del.dataset.confirm) { del.dataset.confirm = "1"; del.textContent = "한 번 더 누르면 모두 삭제돼요 (북마크는 남아요)"; setTimeout(() => { delete del.dataset.confirm; del.textContent = `폴더의 팩 ${list.length}개 모두 삭제`; }, 3000); return; }
+      for (const p of list) await removePack(p.id);
+      go("home");
+    };
+  }
+
   // ---------- interests & recommendations ----------
   function recommend() {
     const topics = S.set.topics || DEFAULT_TOPICS, target = S.set.target, week = 7 * 864e5;
+    // in a folder only the next unfinished pack is recommended, so a big series doesn't crowd out everything else
+    const nextInFolder = new Set(Object.values(folders()).map((list) => (list.find((p) => pctOf(p) < 90) || {}).id).filter(Boolean));
     return Object.values(S.packs).map((p) => {
       const pct = pctOf(p);
       if (pct >= 90) return null;
+      if (folderOf(p) && !nextInFolder.has(p.id)) return null;
       let score = 0; const reasons = [];
       const hit = p.meta.topics.filter((t) => topics.includes(t));
       if (hit.length) { score += 3; reasons.push(TOPICS[hit[0]]); }
@@ -1370,19 +1458,70 @@
     };
   });
 
-  // ---------- delete imported pack ----------
+  // ---------- delete imported packs (bookmarks and notes stay) ----------
+  async function removePack(id) {
+    const p = S.packs[id]; if (!p) return false;
+    try { await idb.del(id); } catch (e) { toast("삭제하지 못했어요."); return false; }
+    if (p._url) URL.revokeObjectURL(p._url);
+    (p._slides || []).forEach((u) => u && URL.revokeObjectURL(u));
+    delete S.packs[id];
+    if (S.p.cont && S.p.cont.id === id) { S.p.cont = null; saveP(); }
+    toast(`"${p.title}" 팩을 삭제했어요`);
+    return true;
+  }
   $("#deletePack").onclick = async () => {
-    const btn = $("#deletePack"), p = P.pack; if (!p || p.builtin) return;
-    if (!btn.dataset.confirm) { btn.dataset.confirm = "1"; btn.textContent = "한 번 더 누르면 삭제돼요 (카드는 남아요)"; setTimeout(() => { delete btn.dataset.confirm; btn.textContent = "이 팩 삭제"; }, 3000); return; }
-    try { await idb.del(p.id); } catch (e) { toast("삭제하지 못했어요."); return; }
-    delete S.packs[p.id]; if (S.p.cont && S.p.cont.id === p.id) { S.p.cont = null; saveP(); }
+    const btn = $("#deletePack"), p = P.pack; if (!p) return;
+    if (!btn.dataset.confirm) { btn.dataset.confirm = "1"; btn.textContent = "한 번 더 누르면 삭제돼요 (북마크는 남아요)"; setTimeout(() => { delete btn.dataset.confirm; btn.textContent = "이 팩 삭제"; }, 3000); return; }
     delete btn.dataset.confirm; btn.textContent = "이 팩 삭제";
-    toast(`"${p.title}" 팩을 삭제했어요`); go("home");
+    if (await removePack(p.id)) go("home");
   };
+
+  // ---------- pack manager ----------
+  const fmtBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + "MB" : Math.max(1, Math.round(n / 1024)) + "KB");
+  const packBytes = (p) => JSON.stringify({ lines: p.lines, speak: p.speak, talkQs: p.talkQs }).length * 2 + (p.media.blob ? p.media.blob.size : 0)
+    + (p.media.slideBlobs || []).reduce((s, b) => s + b.size, 0);
+  async function renderManage() {
+    const packs = Object.values(S.packs).sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
+    const total = packs.reduce((s, p) => s + packBytes(p), 0);
+    let usage = `팩 ${packs.length}개 · 약 ${fmtBytes(total)}`;
+    try {
+      const est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
+      if (est && est.quota) usage += ` (이 앱이 쓸 수 있는 공간 ${fmtBytes(est.quota)} 중 ${fmtBytes(est.usage || 0)} 사용)`;
+    } catch (e) { /* estimate is optional */ }
+    $("#mgUsage").textContent = usage;
+    const list = $("#mgList"); list.textContent = "";
+    const dl = $("#folderNames"); dl.textContent = "";
+    Object.keys(folders()).sort().forEach((f) => { const o = el("option"); o.value = f; dl.append(o); });
+    if (!packs.length) { list.append(el("li", "muted small", "가져온 팩이 없어요.")); return; }
+    packs.sort((a, b) => folderOf(a).localeCompare(folderOf(b)) || folderOrder(a, b)).forEach((p) => {
+      const li = el("li", "mgitem"), txt = el("div");
+      const marks = marksOf(p), added = (p.addedAt || "").slice(0, 10).replace(/-/g, "."), f = folderOf(p);
+      txt.append(el("div", "t", p.title), el("div", "s", [f ? `폴더: ${f}` : "", kindOf(p).label, `${p.lines.length}문장`, fmtBytes(packBytes(p)), `진행 ${pctOf(p)}%`, marks ? `북마크 ${marks}` : "", added ? `${added} 추가` : ""].filter(Boolean).join(" · ")));
+      const acts = el("div", "acts");
+      const fb = el("button", "btn", "폴더"); fb.type = "button"; fb.setAttribute("aria-label", `${p.title} 폴더 정하기`);
+      const row = el("div", "mgfolder"); row.hidden = true;
+      const inp = el("input"); inp.setAttribute("list", "folderNames"); inp.value = f; inp.placeholder = "폴더 이름 (비우면 폴더에서 빼기)"; inp.setAttribute("aria-label", "폴더 이름");
+      const ok = el("button", "btn primary", "저장"); ok.type = "button";
+      ok.onclick = () => { setFolder(p, inp.value); toast(inp.value.trim() ? `"${inp.value.trim()}" 폴더로 옮겼어요` : "폴더에서 뺐어요"); renderManage(); };
+      row.append(inp, ok);
+      fb.onclick = () => { row.hidden = !row.hidden; if (!row.hidden) inp.focus(); };
+      const del = el("button", "btn", "삭제"); del.type = "button"; del.setAttribute("aria-label", `${p.title} 삭제`);
+      del.onclick = async () => {
+        if (!del.classList.contains("confirm")) {
+          del.classList.add("confirm"); del.textContent = "정말 삭제";
+          setTimeout(() => { del.classList.remove("confirm"); del.textContent = "삭제"; }, 3000); return;
+        }
+        if (await removePack(p.id)) renderManage();
+      };
+      acts.append(fb, del);
+      li.append(txt, acts, row); list.append(li);
+    });
+  }
+  $("#manageOpen").onclick = () => open("manage");
   $("#resume").onclick = () => { if (S.p.cont) openPack(S.p.cont.id); };
 
   // ---------- navigation ----------
-  const TITLES = { home: "출퇴근 영어", saved: "북마크", review: "복습", speak: "말하기", talk: "30초 말하기", ask: "Claude에게 묻기", drive: "운전 모드" };
+  const TITLES = { home: "출퇴근 영어", saved: "북마크", review: "복습", speak: "말하기", talk: "30초 말하기", ask: "Claude에게 묻기", drive: "운전 모드", manage: "팩 관리" };
   const NAV = { tab: "home", stack: [] };
   let current = "home";
   function show(name, arg) {
@@ -1402,6 +1541,8 @@
     if (name === "speakrun") startSpeak(arg);
     if (name === "talk") renderTalk(true);
     if (name === "drive") openDrive();
+    if (name === "manage") renderManage();
+    if (name === "folder") renderFolder(arg);
     if (name === "ask") initAsk();
     if (name === "savedpack") renderSavedPack(arg);
     if (name === "review") { startReview(); if (RV.queue.length) setTimeout(playClip, 300); }

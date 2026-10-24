@@ -102,6 +102,18 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 .pack .ic.audio { background: var(--flame-soft); color: var(--flame-ink); }
 .pack .t { font-weight: 700; font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pack .s { font-size: .78rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sec-title h2 .link { font-size: .82rem; min-height: 32px; padding: 0 0 0 8px; vertical-align: middle; }
+.pack.folder .ic { background: var(--good-soft); color: var(--good); }
+.mglist { display: flex; flex-direction: column; gap: 8px; }
+.mgitem .acts { display: flex; gap: 6px; }
+.mgfolder { grid-column: 1 / -1; display: flex; gap: 8px; }
+.mgfolder input { flex: 1; min-width: 0; font: inherit; font-size: .9rem; padding: 8px 10px; border-radius: 10px; border: 2px solid var(--line); background: var(--surface); color: var(--fg); }
+.mgfolder input:focus { outline: none; border-color: var(--primary); }
+.mgitem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; background: var(--surface); border-radius: 14px; padding: 12px; box-shadow: 0 1px 2px var(--shadow); }
+.mgitem .t { font-weight: 700; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mgitem .s { font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mgitem .btn { min-height: 40px; padding: 6px 12px; font-size: .84rem; }
+.mgitem .btn.confirm { background: var(--bad); color: #ffffff; border-color: #9a3412; }
 .steps-sm { margin: 0; padding-left: 1.3em; list-style: decimal; display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
 .pack .stats { font-size: .76rem; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
 .pack .pct { font-family: var(--font-num); font-weight: 800; color: var(--good); font-variant-numeric: tabular-nums; }
@@ -125,6 +137,10 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 .yt-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
 .yt-wrap iframe, .yt-wrap > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .yt-wrap.small { border-radius: 12px; overflow: hidden; }
+.slide-wrap { width: 100%; aspect-ratio: 16 / 9; background: #ffffff; display: grid; place-items: center; }
+.slide-wrap img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.stagebox.fs .slide-wrap { height: 100%; width: auto; max-width: 100%; background: #000; }
+.pack .ic.slides { background: var(--good-soft); color: var(--good); }
 .yt-wrap.vertical { aspect-ratio: 9 / 16; width: auto; height: min(46vh, 420px); max-width: 100%; margin: 0 auto; }
 .media:has(.yt-wrap.vertical:not([hidden])) { background: transparent; }
 .cand { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; background: var(--surface); border-radius: 14px; padding: 12px; box-shadow: 0 1px 2px var(--shadow); }
@@ -157,7 +173,7 @@ a.btn { text-decoration: none; }
 .seg button[aria-pressed="true"] { background: var(--primary-soft); color: var(--primary-ink); font-weight: 700; }
 .toggle { min-height: 44px; padding: 6px 12px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); font-size: .84rem; font-weight: 500; color: var(--muted); }
 .toggle[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-soft); color: var(--primary-ink); font-weight: 700; }
-.script { display: flex; flex-direction: column; gap: 6px; }
+.script { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; overscroll-behavior: contain; position: relative; padding: 2px; border-radius: 14px; }
 .sline { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 4px; align-items: start; background: var(--surface); border-radius: 12px; padding: 8px 4px 8px 12px; box-shadow: 0 1px 2px var(--shadow); }
 .sline.cur { box-shadow: inset 0 0 0 2px var(--primary); }
 .sline.seen .en { color: var(--muted); }
