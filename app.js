@@ -1708,8 +1708,10 @@
     const packs = Object.values(S.packs);
     if (!packs.length) { list.append(emptyPacks()); return; }
     const fs = folders();
-    Object.keys(fs).sort().forEach((name) => list.append(folderCard(name, fs[name])));
-    packs.filter((p) => !folderOf(p)).sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).forEach((p) => list.append(packCard(p, null, false)));
+    // folders first, then loose packs newest first, unless the learner arranged them
+    const items = Object.keys(fs).sort().map((n) => ({ key: "f:" + n, make: () => folderCard(n, fs[n]) }))
+      .concat(packs.filter((p) => !folderOf(p)).sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).map((p) => ({ key: "p:" + p.id, make: () => packCard(p, null, false) })));
+    byOrder(items, (x) => x.key, "").forEach((x) => { const c = x.make(); c.dataset.key = x.key; list.append(c); });
   }
   function emptyPacks() {
     const box = el("div", "panel empty-packs");
@@ -1745,16 +1747,17 @@
   function folders() {
     const m = {};
     Object.values(S.packs).forEach((p) => { const f = folderOf(p); if (f) (m[f] = m[f] || []).push(p); });
-    Object.values(m).forEach((list) => list.sort(folderOrder));
+    Object.entries(m).forEach(([name, list]) => { list.sort(folderOrder); m[name] = byOrder(list, (p) => "p:" + p.id, name); });
     return m;
   }
-  function setFolder(p, name) {
-    S.set.packFolder = S.set.packFolder || {};
-    const v = name.trim();
-    // empty means "no folder", even for a pack whose maker put it in a series
-    S.set.packFolder[p.id] = v;
-    save("settings", S.set);
+  // the learner's own order: S.set.order[""] for the home list ("f:<folder>" / "p:<id>"), S.set.order[<folder>] inside a folder;
+  // items it doesn't know yet (new imports) come first, in their default order
+  function byOrder(items, keyOf, ctx) {
+    const pos = new Map(((S.set.order || {})[ctx] || []).map((k, i) => [k, i]));
+    return items.map((it, i) => ({ it, i, o: pos.has(keyOf(it)) ? pos.get(keyOf(it)) : -1 }))
+      .sort((a, b) => a.o - b.o || a.i - b.i).map((x) => x.it);
   }
+  function saveOrder(ctx, keys) { S.set.order = S.set.order || {}; S.set.order[ctx] = keys; save("settings", S.set); }
   function folderCard(name, list) {
     const b = el("button", "pack folder"); b.type = "button";
     const ic = el("span", "ic"); ic.append(icon("folder"));
@@ -1775,7 +1778,7 @@
     const next = list.find((p) => pctOf(p) < 90);
     $("#fdNext").hidden = !next;
     if (next) { $("#fdNextTitle").textContent = next.title; $("#fdNext").onclick = () => openPack(next.id); }
-    list.forEach((p) => box.append(packCard(p, null, false)));
+    list.forEach((p) => { const c = packCard(p, null, false); c.dataset.key = "p:" + p.id; box.append(c); });
     $("#fdDelete").hidden = false;
     const del = $("#fdDelete"); del.textContent = `폴더의 팩 ${list.length}개 모두 삭제`; delete del.dataset.confirm;
     del.onclick = async () => {
@@ -1784,6 +1787,138 @@
       go("home");
     };
   }
+
+  // ---------- arranging the pack lists, like a photo album ----------
+  // long-press a card to start selecting (then tap more), move the selection to a folder or delete it, drag ≡ to reorder
+  const ED = { box: null, ctx: null, sel: new Set() };
+  const edCards = () => [...ED.box.querySelectorAll(".pack[data-key]")];
+  const packsOfKeys = (keys) => [...keys].flatMap((k) => (k.startsWith("f:") ? folders()[k.slice(2)] || [] : S.packs[k.slice(2)] ? [S.packs[k.slice(2)]] : []));
+  function editStart(box, ctx, key) {
+    if (ED.box) editEnd();
+    ED.box = box; ED.ctx = ctx; ED.sel = new Set([key]);
+    box.classList.add("editing");
+    edCards().forEach((c) => { const h = el("span", "drag"); h.setAttribute("aria-label", "끌어서 순서 바꾸기"); h.append(icon("grip")); c.append(h); });
+    $("#editBar").hidden = false;
+    renderSel();
+  }
+  function editEnd() {
+    if (!ED.box) return;
+    ED.box.classList.remove("editing");
+    ED.box.querySelectorAll(".drag").forEach((h) => h.remove());
+    ED.box.querySelectorAll(".pack[aria-checked]").forEach((c) => c.removeAttribute("aria-checked"));
+    ED.box = null; ED.sel.clear();
+    $("#editBar").hidden = true;
+  }
+  function renderSel() {
+    edCards().forEach((c) => c.setAttribute("aria-checked", String(ED.sel.has(c.dataset.key))));
+    const n = ED.sel.size;
+    $("#edCount").textContent = n ? `${n}개 선택` : "선택 없음";
+    $("#edMove").disabled = !n; $("#edDel").disabled = !n;
+    const del = $("#edDel"); delete del.dataset.confirm; del.textContent = "삭제";
+  }
+  function refreshAfterEdit() {
+    if (current !== "folder") { renderHome(); return; }
+    if (folders()[ED.ctx]) renderFolder(ED.ctx); else back();   // the folder emptied out
+  }
+  function arrangeable(box, ctxOf) {
+    let timer = 0, sx = 0, sy = 0, fired = false;
+    box.addEventListener("pointerdown", (e) => {
+      const card = e.target.closest(".pack[data-key]");
+      if (!card || ED.box === box) return;
+      fired = false; sx = e.clientX; sy = e.clientY;
+      timer = setTimeout(() => { fired = true; editStart(box, ctxOf(), card.dataset.key); if (navigator.vibrate) navigator.vibrate(15); }, 500);
+    });
+    const cancel = () => clearTimeout(timer);
+    box.addEventListener("pointermove", (e) => { if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel(); });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((t) => box.addEventListener(t, cancel));
+    box.addEventListener("contextmenu", (e) => { if (e.target.closest(".pack[data-key]")) e.preventDefault(); });
+    // while selecting, a tap toggles the card instead of opening it; the click that ends a long-press is swallowed
+    box.addEventListener("click", (e) => {
+      const card = e.target.closest(".pack[data-key]"); if (!card) return;
+      if (fired) { fired = false; e.preventDefault(); e.stopPropagation(); return; }
+      if (ED.box !== box) return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.target.closest(".drag")) return;
+      const k = card.dataset.key;
+      if (ED.sel.has(k)) ED.sel.delete(k); else ED.sel.add(k);
+      renderSel();
+    }, true);
+    // drag the ≡ handle to reorder; the new order is saved when the finger lifts
+    box.addEventListener("pointerdown", (e) => {
+      const h = e.target.closest(".drag"); if (!h || ED.box !== box) return;
+      e.preventDefault();
+      const card = h.closest(".pack"); card.classList.add("dragging");
+      try { h.setPointerCapture(e.pointerId); } catch (err) { /* keeps working without capture */ }
+      const move = (ev) => {
+        const y = ev.clientY;
+        if (y < 90) window.scrollBy(0, -12); else if (y > innerHeight - 150) window.scrollBy(0, 12);
+        const after = edCards().filter((c) => c !== card).find((c) => { const r = c.getBoundingClientRect(); return y < r.top + r.height / 2; });
+        if (after) { if (card.nextElementSibling !== after) box.insertBefore(card, after); } else if (box.lastElementChild !== card) box.append(card);
+      };
+      const up = () => {
+        h.removeEventListener("pointermove", move); h.removeEventListener("pointerup", up); h.removeEventListener("pointercancel", up);
+        card.classList.remove("dragging");
+        saveOrder(ED.ctx, edCards().map((c) => c.dataset.key));
+      };
+      h.addEventListener("pointermove", move); h.addEventListener("pointerup", up); h.addEventListener("pointercancel", up);
+    });
+  }
+  arrangeable($("#packList"), () => "");
+  arrangeable($("#fdList"), () => NAV.stack.length ? NAV.stack[NAV.stack.length - 1].arg : "");
+  $("#edDone").onclick = editEnd;
+  $("#edMove").onclick = () => { if (ED.sel.size) openMove([...ED.sel], () => { editEnd(); refreshAfterEdit(); }); };
+  $("#edDel").onclick = async () => {
+    const del = $("#edDel"), list = packsOfKeys(ED.sel);
+    if (!list.length) return;
+    if (!del.dataset.confirm) { del.dataset.confirm = "1"; del.textContent = `팩 ${list.length}개 삭제?`; setTimeout(() => { if (del.dataset.confirm) renderSel(); }, 3000); return; }
+    for (const p of list) await removePack(p.id);
+    toast(`팩 ${list.length}개를 삭제했어요 (북마크는 남아요)`);
+    editEnd(); refreshAfterEdit();
+  };
+
+  // move sheet: pick an existing folder, take packs out of their folder, or make a new one
+  let mvKeys = [], mvDone = null;
+  function openMove(keys, done) {
+    mvKeys = keys; mvDone = done;
+    const list = packsOfKeys(keys), from = new Set(list.map(folderOf));
+    const box = $("#mvList"); box.textContent = "";
+    const fs = folders();
+    byOrder(Object.keys(fs).sort(), (n) => "f:" + n, "").forEach((n) => {
+      const b = el("button", "mv-item"); b.type = "button";
+      const ic = el("span", "ic"); ic.append(icon("folder"));
+      b.append(ic, el("span", "t", n), el("span", "s", `${fs[n].length}개`));
+      if (from.size === 1 && from.has(n)) { b.disabled = true; b.append(el("span", "s", "지금 여기")); }
+      b.onclick = () => moveTo(n);
+      box.append(b);
+    });
+    if ([...from].some(Boolean)) {
+      const b = el("button", "mv-item out"); b.type = "button";
+      const ic = el("span", "ic"); ic.append(icon("home"));
+      b.append(ic, el("span", "t", "폴더에서 빼기"), el("span", "s", "홈 목록으로"));
+      b.onclick = () => moveTo("");
+      box.append(b);
+    }
+    $("#mvTitle").textContent = `팩 ${list.length}개 옮기기`;
+    $("#mvNew").value = "";
+    $("#moveSheet").hidden = false;
+  }
+  function moveTo(name) {
+    const list = packsOfKeys(mvKeys);
+    // "" means "no folder", even for a pack whose maker put it in a series
+    list.forEach((p) => { S.set.packFolder = S.set.packFolder || {}; S.set.packFolder[p.id] = name; });
+    save("settings", S.set);
+    $("#moveSheet").hidden = true;
+    toast(name ? `팩 ${list.length}개를 "${name}" 폴더로 옮겼어요` : `팩 ${list.length}개를 폴더에서 뺐어요`);
+    if (mvDone) mvDone();
+  }
+  $("#mvCreate").onclick = () => {
+    const n = $("#mvNew").value.trim();
+    if (!n) { toast("새 폴더 이름을 적어 주세요"); $("#mvNew").focus(); return; }
+    moveTo(n);
+  };
+  $("#mvNew").onkeydown = (e) => { if (e.key === "Enter") $("#mvCreate").click(); };
+  $("#mvCancel").onclick = () => { $("#moveSheet").hidden = true; };
+  $("#moveSheet").onclick = (e) => { if (e.target.id === "moveSheet") $("#moveSheet").hidden = true; };
 
   // ---------- interests & live recommendations ----------
   let candOffset = 0;
@@ -2023,21 +2158,14 @@
     } catch (e) { /* estimate is optional */ }
     $("#mgUsage").textContent = usage;
     const list = $("#mgList"); list.textContent = "";
-    const dl = $("#folderNames"); dl.textContent = "";
-    Object.keys(folders()).sort().forEach((f) => { const o = el("option"); o.value = f; dl.append(o); });
     if (!packs.length) { list.append(el("li", "muted small", "가져온 팩이 없어요.")); return; }
     packs.sort((a, b) => folderOf(a).localeCompare(folderOf(b)) || folderOrder(a, b)).forEach((p) => {
       const li = el("li", "mgitem"), txt = el("div");
       const marks = marksOf(p), added = (p.addedAt || "").slice(0, 10).replace(/-/g, "."), f = folderOf(p);
       txt.append(el("div", "t", p.title), el("div", "s", [f ? `폴더: ${f}` : "", kindOf(p).label, `${p.lines.length}문장`, fmtBytes(packBytes(p)), `진행 ${pctOf(p)}%`, marks ? `북마크 ${marks}` : "", added ? `${added} 추가` : ""].filter(Boolean).join(" · ")));
       const acts = el("div", "acts");
-      const fb = el("button", "btn", "폴더"); fb.type = "button"; fb.setAttribute("aria-label", `${p.title} 폴더 정하기`);
-      const row = el("div", "mgfolder"); row.hidden = true;
-      const inp = el("input"); inp.setAttribute("list", "folderNames"); inp.value = f; inp.placeholder = "폴더 이름 (비우면 폴더에서 빼기)"; inp.setAttribute("aria-label", "폴더 이름");
-      const ok = el("button", "btn primary", "저장"); ok.type = "button";
-      ok.onclick = () => { setFolder(p, inp.value); toast(inp.value.trim() ? `"${inp.value.trim()}" 폴더로 옮겼어요` : "폴더에서 뺐어요"); renderManage(); };
-      row.append(inp, ok);
-      fb.onclick = () => { row.hidden = !row.hidden; if (!row.hidden) inp.focus(); };
+      const fb = el("button", "btn", "폴더 이동"); fb.type = "button"; fb.setAttribute("aria-label", `${p.title} 폴더 옮기기`);
+      fb.onclick = () => openMove(["p:" + p.id], renderManage);
       const del = el("button", "btn", "삭제"); del.type = "button"; del.setAttribute("aria-label", `${p.title} 삭제`);
       del.onclick = async () => {
         if (!del.classList.contains("confirm")) {
@@ -2047,7 +2175,7 @@
         if (await removePack(p.id)) renderManage();
       };
       acts.append(fb, del);
-      li.append(txt, acts, row); list.append(li);
+      li.append(txt, acts); list.append(li);
     });
   }
   $("#manageOpen").onclick = () => open("manage");
@@ -2059,6 +2187,7 @@
   let current = "home";
   function show(name, arg) {
     if (current === "player" && name !== "player") { exitFs(); M.pause(); clearInterval(P.timer); }
+    editEnd();
     if (current === "speakrun" && name !== "speakrun") { clearTimeout(SK.timer); micOff(); }
     if (current === "talk" && name !== "talk") talkStop();
     if (current === "drive" && name !== "drive") driveStop();
