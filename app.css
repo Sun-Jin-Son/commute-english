@@ -148,6 +148,24 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 .cand .s { font-size: .76rem; color: var(--muted); }
 .cand .row { gap: 8px; }
 .cand .row > * { flex: 1 1 120px; }
+.cand-media { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #000; }
+.cand-media.vertical { aspect-ratio: 9 / 16; width: auto; height: min(46vh, 420px); max-width: 100%; margin: 0 auto; }
+.cand-media iframe { width: 100%; height: 100%; border: 0; display: block; }
+.cand-thumb { all: unset; cursor: pointer; display: block; width: 100%; height: 100%; position: relative; }
+.cand-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cand-thumb .play { position: absolute; inset: 0; margin: auto; width: 52px; height: 52px; border-radius: 50%; background: rgba(0, 0, 0, .62); color: #fff; display: grid; place-items: center; }
+.cand-thumb:focus-visible { outline: 3px solid var(--accent, #6c5ce7); outline-offset: -3px; }
+.cand-empty { display: grid; gap: 8px; }
+#candSearch { margin-bottom: 10px; }
+#candSearch:disabled { opacity: .6; }
+.key-form { display: grid; gap: 8px; margin-bottom: 10px; }
+.key-form input { font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line, #d6d3e8); background: var(--surface); color: inherit; min-width: 0; }
+.key-form .row > * { flex: 1 1 auto; }
+.mg-key { margin-top: 18px; padding: 10px 4px; font-size: .86rem; color: var(--muted); }
+.mg-key summary { cursor: pointer; }
+.mg-key[open] { display: grid; gap: 8px; }
+.mg-key input { font: inherit; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--line, #d6d3e8); background: var(--surface); color: var(--text, inherit); min-width: 0; }
+.mg-key .btn { justify-self: start; }
 a.btn { text-decoration: none; }
 .audio-stage { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 12px; align-items: center; padding: 16px; background: #14123a; color: #f1f0ff; }
 .audio-stage .ic { width: 52px; height: 52px; border-radius: 14px; background: var(--flame); color: #1a1200; display: grid; place-items: center; }

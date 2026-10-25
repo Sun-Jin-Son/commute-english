@@ -1262,14 +1262,19 @@
     if (c) { $("#resumeTitle").textContent = c.title; $("#resumePct").textContent = pctOf(c) + "%"; }
     renderInterests();
     const recos = recommend(), cands = candidates();
-    $("#recoBox").hidden = !S.set.topics || (!recos.length && !cands.length);
+    // stays visible even with nothing to show, so the learner can always ask for new videos or change topics
+    $("#recoBox").hidden = !S.set.topics;
     if (recoOffset >= recos.length) recoOffset = 0;
     if (candOffset >= cands.length) candOffset = 0;
     const rl = $("#recoList"); rl.textContent = "";
     recos.slice(recoOffset, recoOffset + 3).forEach((r) => rl.append(packCard(r.p, r.reasons, true)));
-    if (!recos.length) rl.append(el("p", "muted small", "가져온 콘텐츠를 모두 봤어요. 아래 새 영상 후보에서 골라 팩을 요청해 보세요."));
+    if (!recos.length) rl.append(el("p", "muted small", Object.keys(S.packs).length ? "가져온 콘텐츠를 모두 봤어요. 아래 새 영상 후보에서 골라 팩을 요청해 보세요." : "아직 가져온 팩이 없어요. 아래 새 영상 후보에서 골라 팩을 요청해 보세요."));
     $("#recoMore").hidden = recos.length <= 3 && cands.length <= 3;
-    $("#candBox").hidden = !cands.length;
+    $("#candHint").hidden = !cands.length; $("#candEmpty").hidden = !!cands.length;
+    $("#candEmptyText").textContent = S.set.ytKey
+      ? "위의 새 영상 찾기를 누르면 관심 주제에 맞는 영상을 YouTube에서 바로 찾아와요."
+      : "위의 실시간 추천 켜기에서 YouTube API 키를 넣으면 여기서 바로 찾을 수 있어요. 키 없이도 아래 버튼으로 요청 글을 복사해 Claude 앱의 Code에서 PC 세션에 붙여넣으면, 영상을 찾아 추천 묶음 파일로 보내 드려요.";
+    renderSearchBtn();
     const cl = $("#candList"); cl.textContent = "";
     cands.slice(candOffset, candOffset + 3).forEach((c) => cl.append(candCard(c)));
     const list = $("#packList"); list.textContent = "";
@@ -1387,9 +1392,138 @@
       .filter((c) => !c.hidden && !S.packs["yt-" + c.id] && (!c.topic || topics.includes(c.topic)))
       .sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
   }
+  // ---------- live search for new videos (YouTube Data API, with the learner's own key) ----------
+  // keep in step with tools/topics.json, which the PC tools use for the same search
+  const SEARCH = {
+    min: 180, max: 1200,
+    prefer: ["TED", "TED-Ed", "TEDx Talks", "BBC Learning English", "VOA Learning English", "Harvard Business Review", "Asianometry", "Branch Education", "Google Career Certificates", "Stanford Graduate School of Business"],
+    topics: {
+      tech: ["how semiconductor chips are made", "semiconductor industry explained", "how computer chips work"],
+      meeting: ["business English meeting phrases", "how to run effective meetings", "teamwork collaboration talk"],
+      present: ["how to give a great presentation", "public speaking tips TED", "how to explain technical ideas simply"],
+      career: ["leadership TED talk", "career advice for engineers", "how to be a good manager"],
+      habit: ["habits TED talk", "how to avoid burnout", "productivity tips for busy people"],
+      daily: ["English small talk conversation", "travel English conversation", "everyday English listening practice"],
+      science: ["future of technology talk", "artificial intelligence explained", "science explained short talk"],
+      biz: ["business news explained", "how companies make money explained", "supply chain explained"],
+      comedy: { min: 15, max: 480, q: ["clean stand up comedy short clip", "funny office comedy sketch shorts", "late night show funny moment clip"] }
+    }
+  };
+  const PER_TOPIC = 3, YT_DATA = "https://www.googleapis.com/youtube/v3/";
+  const isoSecs = (d) => { const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(d || "") || []; return (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0); };
+  const unescapeHtml = (s) => new DOMParser().parseFromString(s || "", "text/html").documentElement.textContent;
+  async function ytData(path, params) {
+    const res = await fetch(YT_DATA + path + "?" + new URLSearchParams(Object.assign({ key: S.set.ytKey }, params)));
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const why = ((body.error && body.error.errors && body.error.errors[0]) || {}).reason || "";
+      const e = new Error(why === "quotaExceeded" ? "오늘 검색 한도를 다 썼어요. 내일 다시 눌러 주세요."
+        : why === "keyInvalid" || res.status === 400 ? "API 키가 올바르지 않아요. 키를 다시 확인해 주세요."
+        : res.status === 403 ? "이 키로는 검색할 수 없어요. YouTube Data API v3가 켜져 있는지, 웹사이트 제한에 이 주소가 들어 있는지 확인해 주세요."
+        : "검색하지 못했어요 (" + res.status + ")");
+      e.keyProblem = why !== "quotaExceeded"; throw e;
+    }
+    return body;
+  }
+  // one random query per topic, so each tap brings different videos
+  async function findTopic(tid, skip) {
+    const t = SEARCH.topics[tid]; if (!t) return [];
+    const qs = Array.isArray(t) ? t : t.q, lo = t.min || SEARCH.min, hi = t.max || SEARCH.max;
+    const q = qs[Math.floor(Math.random() * qs.length)];
+    const sr = await ytData("search", {
+      part: "snippet", type: "video", q, maxResults: 25, videoCaption: "closedCaption", videoEmbeddable: "true",
+      relevanceLanguage: "en", safeSearch: "moderate"
+    });
+    const ids = (sr.items || []).map((it) => it.id && it.id.videoId).filter((id) => id && !skip.has(id));
+    if (!ids.length) return [];
+    const vr = await ytData("videos", { part: "snippet,contentDetails,statistics", id: ids.join(",") });
+    const prefer = new Set(SEARCH.prefer.map((c) => c.toLowerCase()));
+    return (vr.items || []).map((v) => {
+      const sn = v.snippet || {}, lang = sn.defaultAudioLanguage || sn.defaultLanguage || "";
+      return { id: v.id, title: unescapeHtml(sn.title), channel: sn.channelTitle || "", duration: isoSecs(v.contentDetails && v.contentDetails.duration),
+        views: +((v.statistics || {}).viewCount) || 0, lang, live: sn.liveBroadcastContent !== "none" };
+    })
+      .filter((v) => !v.live && v.duration >= lo && v.duration <= hi && (!v.lang || /^en/i.test(v.lang)))
+      .sort((a, b) => (prefer.has(b.channel.toLowerCase()) - prefer.has(a.channel.toLowerCase())) || b.views - a.views)
+      .slice(0, PER_TOPIC)
+      .map((v) => ({ id: v.id, title: v.title, channel: v.channel, duration: v.duration, topic: tid, shorts: v.duration <= 60 }));
+  }
+  let searching = false;
+  async function liveSearch() {
+    if (!S.set.ytKey) { showKeyForm(true); return; }
+    if (searching) return;
+    searching = true; renderSearchBtn();
+    const topics = (S.set.topics || DEFAULT_TOPICS).filter((t) => SEARCH.topics[t]);
+    // skip videos already shown, hidden or made into packs
+    const skip = new Set(Object.keys(S.cand).concat(Object.keys(S.packs).map((id) => id.replace(/^yt-/, ""))));
+    let added = 0;
+    try {
+      const found = await Promise.all(topics.map((t) => findTopic(t, skip).catch((e) => { if (e.keyProblem !== undefined) throw e; return []; })));
+      const now = Date.now();
+      found.flat().forEach((c, i) => { if (!S.cand[c.id]) { S.cand[c.id] = Object.assign(c, { addedAt: now - i }); added++; } });
+      save("candidates", S.cand);
+      candOffset = 0;
+      toast(added ? `새 영상 ${added}개를 찾았어요` : "새로 찾은 영상이 없어요. 잠시 뒤 다시 눌러 보세요.");
+    } catch (e) {
+      toast(e.message || "검색하지 못했어요. 인터넷 연결을 확인해 주세요.");
+      if (e.keyProblem) showKeyForm(true);
+    } finally {
+      searching = false; renderHome();
+    }
+  }
+  function renderSearchBtn() {
+    const b = $("#candSearch"); b.disabled = searching;
+    b.lastChild.textContent = searching ? " 찾는 중…" : S.set.ytKey ? " 새 영상 찾기" : " 실시간 추천 켜기";
+  }
+  function showKeyForm(on) {
+    $("#keyForm").hidden = !on;
+    if (on) { $("#keyInput").value = S.set.ytKey || ""; $("#keyForm").scrollIntoView({ block: "center", behavior: "smooth" }); }
+  }
+  $("#candSearch").onclick = () => liveSearch();
+  // returns false when the text clearly isn't a key; Google is changing its key format, so a wrong key only shows up on the first search
+  function setKey(v) {
+    if (v && !/^[\w.~-]{20,200}$/.test(v)) { toast("API 키 모양이 아니에요. 사용자 인증 정보의 API 키를 그대로 붙여넣어 주세요."); return false; }
+    S.set.ytKey = v; save("settings", S.set);
+    return true;
+  }
+  $("#keySave").onclick = () => {
+    const v = $("#keyInput").value.trim();
+    if (!setKey(v)) return;
+    showKeyForm(false); renderHome();
+    if (v) liveSearch(); else toast("API 키를 지웠어요");
+  };
+  // changing the key later is rare, so it lives at the bottom of the pack manager instead of on the home screen
+  function renderKeyState() { $("#mgKeyState").textContent = S.set.ytKey ? "· 설정됨" : "· 없음"; $("#mgKeyInput").value = ""; }
+  $("#mgKeySave").onclick = () => {
+    const v = $("#mgKeyInput").value.trim();
+    if (!v && !S.set.ytKey) return;
+    if (!setKey(v)) return;
+    renderKeyState(); toast(v ? "API 키를 바꿨어요" : "API 키를 지웠어요");
+  };
   const fmtDur = (s) => (s <= 60 ? "쇼츠" : `${Math.floor(s / 60)}분`);
+  $("#candAsk").onclick = () => {
+    const names = (S.set.topics || DEFAULT_TOPICS).map((t) => TOPICS[t]).filter(Boolean).join(", ");
+    copyText(`새 영상 후보 추천해줘 (관심 주제: ${names}, 수준: ${lvName(S.set.target)})`, "복사했어요. Claude 앱 → Code에서 이 PC 세션에 붙여넣으세요.");
+  };
+  // a thumbnail first; tapping it plays the video right in the card so the learner can judge it before asking for a pack
+  function candPreview(c) {
+    const wrap = el("div", "cand-media" + (c.shorts ? " vertical" : ""));
+    const thumb = el("button", "cand-thumb"); thumb.type = "button"; thumb.setAttribute("aria-label", `${c.title} 미리 보기`);
+    const img = el("img"); img.src = `https://i.ytimg.com/vi/${c.id}/hqdefault.jpg`; img.alt = ""; img.loading = "lazy";
+    const play = el("span", "play"); play.append(icon("video"));
+    thumb.append(img, play);
+    thumb.onclick = () => {
+      const f = el("iframe");
+      f.src = `https://www.youtube-nocookie.com/embed/${c.id}?autoplay=1&playsinline=1&rel=0`;
+      f.allow = "autoplay; encrypted-media; picture-in-picture"; f.allowFullscreen = true; f.title = c.title;
+      wrap.replaceChildren(f);
+    };
+    wrap.append(thumb);
+    return wrap;
+  }
   function candCard(c) {
     const box = el("div", "cand");
+    box.append(candPreview(c));
     const head = el("div");
     head.append(el("div", "t", c.title), el("div", "s", [c.channel, fmtDur(c.duration), TOPICS[c.topic]].filter(Boolean).join(" · ")));
     const row = el("div", "row");
@@ -1432,6 +1566,7 @@
   $("#interestDone").onclick = () => {
     if (!draftTopics || !draftTopics.length) { toast("주제를 하나 이상 골라 주세요."); return; }
     S.set.topics = draftTopics; draftTopics = null; save("settings", S.set); renderHome(); toast("관심 주제에 맞춰 추천할게요");
+    if (S.set.ytKey) liveSearch();
   };
   $("#editInterests").onclick = () => { draftTopics = (S.set.topics || DEFAULT_TOPICS).slice(); renderHome(); $("#interestPanel").scrollIntoView({ block: "start", behavior: "smooth" }); };
 
@@ -1481,6 +1616,7 @@
   const packBytes = (p) => JSON.stringify({ lines: p.lines, speak: p.speak, talkQs: p.talkQs }).length * 2 + (p.media.blob ? p.media.blob.size : 0)
     + (p.media.slideBlobs || []).reduce((s, b) => s + b.size, 0);
   async function renderManage() {
+    renderKeyState();
     const packs = Object.values(S.packs).sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
     const total = packs.reduce((s, p) => s + packBytes(p), 0);
     let usage = `팩 ${packs.length}개 · 약 ${fmtBytes(total)}`;

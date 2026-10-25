@@ -81,10 +81,22 @@
     <div id="recoBox" hidden>
       <div class="sec-title"><h2>오늘의 추천</h2><button class="link" type="button" id="recoMore">다른 추천 보기</button></div>
       <div class="packs" id="recoList"></div>
-      <div id="candBox" hidden>
+      <div id="candBox">
         <div class="sec-title"><h2>새 영상 후보</h2><span class="muted small">아직 팩이 아니에요</span></div>
-        <p class="muted small">보고 싶은 영상이 있으면 <b>팩 요청 복사</b>를 눌러 Claude 앱의 Code에서 이 PC 세션에 붙여넣으세요.</p>
+        <button class="btn primary wide" type="button" id="candSearch"><svg class="i"><use href="#i-spark"/></svg><span> 새 영상 찾기</span></button>
+        <div class="panel key-form" id="keyForm" hidden>
+          <b>YouTube API 키</b>
+          <p class="muted small">관심 주제로 YouTube에서 자막 있는 영어 영상을 바로 찾아요. 키는 이 휴대폰에만 저장되고 어디에도 올라가지 않아요. 만드는 방법은 PC 폴더의 <b>YouTube-API-키-만들기</b> 안내를 보세요.</p>
+          <input id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="API 키 붙여넣기" aria-label="YouTube API 키">
+          <div class="row"><button class="btn primary" type="button" id="keySave">저장하고 찾기</button></div>
+        </div>
+        <p class="muted small" id="candHint">영상을 눌러 미리 보고, 마음에 들면 <b>팩 요청 복사</b>를 눌러 Claude 앱의 Code에서 이 PC 세션에 붙여넣으세요.</p>
         <div class="packs" id="candList"></div>
+        <div class="panel cand-empty" id="candEmpty" hidden>
+          <b>아직 새 영상 후보가 없어요</b>
+          <p class="muted small" id="candEmptyText"></p>
+          <button class="btn wide" type="button" id="candAsk">PC에 추천 요청 복사</button>
+        </div>
       </div>
       <button class="link" type="button" id="editInterests">관심 주제 바꾸기</button>
     </div>
@@ -260,6 +272,12 @@
     </div>
     <ul class="mglist" id="mgList"></ul>
     <datalist id="folderNames"></datalist>
+    <details class="mg-key">
+      <summary>YouTube API 키 <span class="muted small" id="mgKeyState"></span></summary>
+      <p class="muted small">새 영상 찾기에 쓰는 키예요. 이 휴대폰에만 저장돼요. 칸을 비우고 저장하면 지워져요.</p>
+      <input id="mgKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="API 키 붙여넣기" aria-label="YouTube API 키">
+      <button class="btn small" type="button" id="mgKeySave">저장</button>
+    </details>
   </section>
 
   <!-- DRIVING MODE -->
