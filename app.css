@@ -157,6 +157,15 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 .cand-thumb:focus-visible { outline: 3px solid var(--accent, #6c5ce7); outline-offset: -3px; }
 .cand-empty { display: grid; gap: 8px; }
 #candSearch { margin-bottom: 10px; }
+.live-toggle { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+.live-toggle:focus-visible { outline: 3px solid var(--primary-soft); border-radius: 8px; }
+.live-toggle .chev { width: 18px; height: 18px; transition: transform .2s; transform: rotate(90deg); color: var(--muted); }
+.live-toggle[aria-expanded="false"] .chev { transform: rotate(0deg); }
+.live-head .iconbtn { margin-left: 0; margin-right: -10px; color: var(--primary); }
+.live-head .iconbtn:disabled { opacity: .5; }
+.live-head .iconbtn.spin svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(-360deg); } }
+@media (prefers-reduced-motion: reduce) { .live-head .iconbtn.spin svg { animation: none; } .live-toggle .chev { transition: none; } }
 #candSearch:disabled { opacity: .6; }
 .key-form { display: grid; gap: 8px; margin-bottom: 10px; }
 .key-form input { font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line, #d6d3e8); background: var(--surface); color: inherit; min-width: 0; }

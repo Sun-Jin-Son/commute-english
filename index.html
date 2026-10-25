@@ -79,11 +79,14 @@
     </div>
 
     <div id="recoBox" hidden>
-      <div class="sec-title"><h2>오늘의 추천</h2><button class="link" type="button" id="recoMore">다른 추천 보기</button></div>
-      <div class="packs" id="recoList"></div>
+      <div class="sec-title live-head">
+        <button class="live-toggle" type="button" id="liveToggle" aria-expanded="true" aria-controls="candBox">
+          <h2>실시간 추천</h2><svg class="i chev"><use href="#i-next"/></svg>
+        </button>
+        <button class="iconbtn" type="button" id="liveRefresh" aria-label="다른 영상 보기"><svg class="i"><use href="#i-replay"/></svg></button>
+      </div>
       <div id="candBox">
-        <div class="sec-title"><h2>새 영상 후보</h2><span class="muted small">아직 팩이 아니에요</span></div>
-        <button class="btn primary wide" type="button" id="candSearch"><svg class="i"><use href="#i-spark"/></svg><span> 새 영상 찾기</span></button>
+        <button class="btn primary wide" type="button" id="candSearch"><svg class="i"><use href="#i-spark"/></svg><span> 실시간 추천 켜기</span></button>
         <div class="panel key-form" id="keyForm" hidden>
           <b>YouTube API 키</b>
           <p class="muted small">관심 주제로 YouTube에서 자막 있는 영어 영상을 바로 찾아요. 키는 이 휴대폰에만 저장되고 어디에도 올라가지 않아요. 만드는 방법은 PC 폴더의 <b>YouTube-API-키-만들기</b> 안내를 보세요.</p>
@@ -97,8 +100,8 @@
           <p class="muted small" id="candEmptyText"></p>
           <button class="btn wide" type="button" id="candAsk">PC에 추천 요청 복사</button>
         </div>
+        <button class="link" type="button" id="editInterests">관심 주제 바꾸기</button>
       </div>
-      <button class="link" type="button" id="editInterests">관심 주제 바꾸기</button>
     </div>
 
     <button class="resume" id="resume" type="button" hidden>

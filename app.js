@@ -1261,18 +1261,16 @@
     $("#resume").hidden = !c;
     if (c) { $("#resumeTitle").textContent = c.title; $("#resumePct").textContent = pctOf(c) + "%"; }
     renderInterests();
-    const recos = recommend(), cands = candidates();
+    const cands = candidates();
     // stays visible even with nothing to show, so the learner can always ask for new videos or change topics
     $("#recoBox").hidden = !S.set.topics;
-    if (recoOffset >= recos.length) recoOffset = 0;
+    const open = S.set.liveOpen !== false;
+    $("#liveToggle").setAttribute("aria-expanded", String(open)); $("#candBox").hidden = !open;
     if (candOffset >= cands.length) candOffset = 0;
-    const rl = $("#recoList"); rl.textContent = "";
-    recos.slice(recoOffset, recoOffset + 3).forEach((r) => rl.append(packCard(r.p, r.reasons, true)));
-    if (!recos.length) rl.append(el("p", "muted small", Object.keys(S.packs).length ? "가져온 콘텐츠를 모두 봤어요. 아래 새 영상 후보에서 골라 팩을 요청해 보세요." : "아직 가져온 팩이 없어요. 아래 새 영상 후보에서 골라 팩을 요청해 보세요."));
-    $("#recoMore").hidden = recos.length <= 3 && cands.length <= 3;
+    $("#candSearch").hidden = !!S.set.ytKey;   // with a key, the refresh button next to the title does the searching
     $("#candHint").hidden = !cands.length; $("#candEmpty").hidden = !!cands.length;
     $("#candEmptyText").textContent = S.set.ytKey
-      ? "위의 새 영상 찾기를 누르면 관심 주제에 맞는 영상을 YouTube에서 바로 찾아와요."
+      ? "제목 옆 새로고침 버튼을 누르면 관심 주제에 맞는 영상을 YouTube에서 바로 찾아와요."
       : "위의 실시간 추천 켜기에서 YouTube API 키를 넣으면 여기서 바로 찾을 수 있어요. 키 없이도 아래 버튼으로 요청 글을 복사해 Claude 앱의 Code에서 PC 세션에 붙여넣으면, 영상을 찾아 추천 묶음 파일로 보내 드려요.";
     renderSearchBtn();
     const cl = $("#candList"); cl.textContent = "";
@@ -1358,34 +1356,16 @@
     };
   }
 
-  // ---------- interests & recommendations ----------
-  function recommend() {
-    const topics = S.set.topics || DEFAULT_TOPICS, target = S.set.target, week = 7 * 864e5;
-    // in a folder only the next unfinished pack is recommended, so a big series doesn't crowd out everything else
-    const nextInFolder = new Set(Object.values(folders()).map((list) => (list.find((p) => pctOf(p) < 90) || {}).id).filter(Boolean));
-    return Object.values(S.packs).map((p) => {
-      const pct = pctOf(p);
-      if (pct >= 90) return null;
-      if (folderOf(p) && !nextInFolder.has(p.id)) return null;
-      let score = 0; const reasons = [];
-      const hit = p.meta.topics.filter((t) => topics.includes(t));
-      if (hit.length) { score += 3; reasons.push(TOPICS[hit[0]]); }
-      const lv = lvNum(p.level);
-      if (lv != null) {
-        const d = lv - target;
-        if (Math.abs(d) <= 0.5) { score += 2; reasons.push({ t: "내 수준에 맞음", fit: true }); }
-        else if (d > 0.5 && d <= 1.5) { score += 1; reasons.push("조금 도전"); }
-        else if (d < -0.5) { score += 0.5; reasons.push("편하게 듣기"); }
-        else score -= 1;
-      }
-      if (p.meta.minutes && p.meta.minutes <= 8) { score += 1; reasons.push(`${Math.round(p.meta.minutes)}분 · 출근길용`); }
-      if (pct > 0) { score += 1.5; reasons.unshift("보던 중"); }
-      if (!p.builtin && Date.now() - new Date(p.addedAt).getTime() < week) { score += 0.5; reasons.push("새로 들어옴"); }
-      return { p, score, reasons };
-    }).filter(Boolean).sort((a, b) => b.score - a.score);
-  }
-  let recoOffset = 0, candOffset = 0;
-  $("#recoMore").onclick = () => { recoOffset += 3; candOffset += 3; renderHome(); };
+  // ---------- interests & live recommendations ----------
+  let candOffset = 0;
+  $("#liveToggle").onclick = () => { S.set.liveOpen = S.set.liveOpen === false; save("settings", S.set); renderHome(); };
+  // refresh: next three of the videos already found, and a new search once those run out (saves the daily quota)
+  $("#liveRefresh").onclick = () => {
+    if (S.set.liveOpen === false) { S.set.liveOpen = true; save("settings", S.set); }
+    if (!S.set.ytKey) { renderHome(); showKeyForm(true); return; }
+    if (candOffset + 3 < candidates().length) { candOffset += 3; renderHome(); return; }
+    liveSearch();
+  };
   function candidates() {
     const topics = S.set.topics || DEFAULT_TOPICS;
     return Object.values(S.cand)
@@ -1473,7 +1453,8 @@
   }
   function renderSearchBtn() {
     const b = $("#candSearch"); b.disabled = searching;
-    b.lastChild.textContent = searching ? " 찾는 중…" : S.set.ytKey ? " 새 영상 찾기" : " 실시간 추천 켜기";
+    b.lastChild.textContent = searching ? " 찾는 중…" : " 실시간 추천 켜기";
+    const r = $("#liveRefresh"); r.disabled = searching; r.classList.toggle("spin", searching);
   }
   function showKeyForm(on) {
     $("#keyForm").hidden = !on;
