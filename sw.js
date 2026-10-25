@@ -1,6 +1,6 @@
 // Network-first for the app's own files so updates show up right away; cache keeps it working offline.
 // Only the program is cached here; packs live in IndexedDB on the phone.
-const CACHE = "ce-pwa-v10";
+const CACHE = "ce-pwa-v14";
 const SHELL = [
   "./", "index.html", "app.css", "app.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"

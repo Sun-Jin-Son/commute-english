@@ -24,6 +24,7 @@
   <symbol id="i-replay" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5"/></symbol>
   <symbol id="i-next" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9.5 9.5l5 5M14.5 9.5l-5 5"/></symbol>
   <symbol id="i-prev" viewBox="0 0 24 24"><path d="M19 12H6M11 6l-6 6 6 6"/></symbol>
   <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
   <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></symbol>
@@ -79,6 +80,10 @@
       <button class="btn primary wide" type="button" id="interestDone">이대로 추천받기</button>
     </div>
 
+    <button class="resume wrongq" id="wrongQuiz" type="button" hidden>
+      <span class="ic"><svg class="i"><use href="#i-note"/></svg></span>
+      <span class="resume-txt"><small>오답 퀴즈</small><b id="wrongQuizN"></b></span>
+    </button>
     <button class="resume" id="resume" type="button" hidden>
       <span class="ic"><svg class="i"><use href="#i-next"/></svg></span>
       <span class="resume-txt"><small>이어서 보기</small><b id="resumeTitle"></b></span>
@@ -258,6 +263,19 @@
   </section>
 
   <!-- FOLDER -->
+  <section class="view" id="v-grammar" hidden>
+    <div class="panel gr-head">
+      <small class="muted" id="grRef"></small>
+      <b id="grTitle"></b>
+      <p class="muted small" id="grStats"></p>
+      <div class="seg wide" id="grSteps" role="group" aria-label="학습 단계">
+        <button type="button" data-step="rule">핵심 정리</button><button type="button" data-step="quiz">퀴즈</button><button type="button" data-step="recall">떠올리기</button>
+      </div>
+    </div>
+    <div class="gr-body" id="grBody"></div>
+    <button class="btn wide" type="button" id="grListen"><svg class="i"><use href="#i-sound"/></svg> 예문 전체 듣기</button>
+  </section>
+
   <section class="view" id="v-folder" hidden>
     <button class="resume" type="button" id="fdNext" hidden>
       <span class="ic"><svg class="i"><use href="#i-next"/></svg></span>
@@ -364,6 +382,32 @@
     </div>
   </section>
 
+  <!-- BOOKMARKS IN ONE FOLDER -->
+  <section class="view" id="v-savedfolder" hidden>
+    <div class="packs" id="sfList"></div>
+  </section>
+
+  <!-- WRONG-ANSWER NOTEBOOK -->
+  <section class="view" id="v-wrong" hidden>
+    <div class="panel review-start">
+      <div>
+        <b id="wrCount">오답노트</b>
+        <p class="muted small">문법 퀴즈에서 틀린 문제예요. 다시 맞혀도 직접 빼기 전까지 남아 있어요.</p>
+      </div>
+      <button class="btn primary" type="button" id="wrStart">오답 퀴즈 풀기</button>
+    </div>
+    <div class="wr-list" id="wrList"></div>
+    <details class="wr-out" id="wrOutBox" hidden>
+      <summary id="wrOutCount">뺀 문제</summary>
+      <div class="wr-list" id="wrOutList"></div>
+    </details>
+  </section>
+
+  <!-- WRONG-ANSWER QUIZ -->
+  <section class="view" id="v-wquiz" hidden>
+    <div class="gr-body" id="wqBody"></div>
+  </section>
+
   <!-- BOOKMARKS OF ONE PACK -->
   <section class="view" id="v-savedpack" hidden>
     <div class="yt-wrap small" id="spYtWrap" hidden><div id="spYtHost"></div></div>
@@ -409,6 +453,7 @@
   <button type="button" data-tab="home" aria-current="page"><svg class="i"><use href="#i-home"/></svg>홈</button>
   <button type="button" data-tab="speak"><svg class="i"><use href="#i-mic"/></svg>말하기</button>
   <button type="button" data-tab="saved"><svg class="i"><use href="#i-star"/></svg>북마크<span class="badge" id="dueBadge" hidden></span></button>
+  <button type="button" data-tab="wrong"><svg class="i"><use href="#i-note"/></svg>오답노트</button>
 </nav>
 <div class="toast" id="toast" role="status" hidden></div>
 

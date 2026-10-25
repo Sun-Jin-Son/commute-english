@@ -56,6 +56,7 @@
     p: load("progress", { xp: 0, streak: 0, best: 0, last: null, days: {}, seen: {}, cont: null }),
     cards: load("cards", {}),
     cand: load("candidates", {}),
+    wrong: load("wrong", {}),   // wrong-answer notebook: "<packId>~q<k>" -> { packId, k, miss, hit, out }
     speak: load("speak", {}),   // per prompt: { n, good, slow, miss, last, ms (best voice onset) }
     talks: load("talks", []),   // 30-second answers: { id, packId, title, q, qko, text, secs, at, sent }
     set: Object.assign({ rate: 1, pauseEach: true, showKo: false, topics: null, target: 2.5, rated: {} }, load("settings", {})),
@@ -119,6 +120,18 @@
     }
     return box;
   }
+  // grammar packs add a rule card and choice quizzes on top of their example sentences (the lines)
+  function normGrammar(g, n) {
+    if (!g || typeof g !== "object") return null;
+    const txt = (v) => (typeof v === "string" ? v.trim() : "");
+    const exOk = (i) => Number.isInteger(i) && i >= 0 && i < n;
+    const points = (Array.isArray(g.points) ? g.points : []).map((p) => ({ h: txt(p && p.h), d: txt(p && p.d), ex: (Array.isArray(p && p.ex) ? p.ex : []).filter(exOk) })).filter((p) => p.h);
+    const pairs = (Array.isArray(g.pairs) ? g.pairs : []).map((p) => ({ a: txt(p && p.a), b: txt(p && p.b), d: txt(p && p.d) })).filter((p) => p.a && p.b);
+    const quiz = (Array.isArray(g.quiz) ? g.quiz : [])
+      .map((q) => ({ q: txt(q && q.q), ko: txt(q && q.ko), opts: (Array.isArray(q && q.opts) ? q.opts : []).map(txt), a: q && q.a, why: txt(q && q.why), ex: exOk(q && q.ex) ? q.ex : -1 }))
+      .filter((q) => q.q.includes("___") && q.opts.length >= 2 && Number.isInteger(q.a) && q.a >= 0 && q.a < q.opts.length);
+    return points.length || quiz.length ? { ref: txt(g.ref), intro: txt(g.intro), points, pairs, quiz } : null;
+  }
   function normPack(o) {
     if (!o || o.type !== "ce-pack") throw new Error("출퇴근 영어 팩 파일이 아니에요.");
     const m = o.media || {};
@@ -131,6 +144,8 @@
       .map((l) => ({ t: +l.t, e: Number.isFinite(+l.e) ? +l.e : +l.t + 4, en: l.en.trim(), ko: (l.ko || "").trim(), note: (l.note || "").trim(), who: l.who || "", study: normStudy(l.study), slide: Number.isInteger(l.slide) ? l.slide : null }))
       .sort((a, b) => a.t - b.t);
     if (!lines.length) throw new Error("팩에 문장이 없어요.");
+    // a sentence must end by the time the next one starts, or "문장마다 멈춤" skips past it
+    lines.forEach((l, i) => { const n = lines[i + 1]; if (n && l.e > n.t) l.e = n.t; });
     const id = String(o.id || "").replace(/[^A-Za-z0-9_.-]/g, "-") || "pack-" + Date.now();
     const speak = (Array.isArray(o.speak) ? o.speak : [])
       .filter((s) => s && typeof s.ko === "string" && typeof s.en === "string" && s.ko.trim() && s.en.trim())
@@ -145,7 +160,7 @@
         topics, minutes, url: meta.url || "", shorts: !!meta.shorts,
         series: meta.series && typeof meta.series.title === "string" ? { title: meta.series.title.trim(), order: Number(meta.series.order) || 0 } : null
       },
-      media: m, lines, speak, addedAt: o.addedAt || new Date().toISOString(),
+      media: m, lines, speak, addedAt: o.addedAt || new Date().toISOString(), grammar: normGrammar(o.grammar, lines.length),
       talkQs: (Array.isArray(o.talk) ? o.talk : []).filter((q) => q && typeof q.en === "string" && q.en.trim()).map((q) => ({ en: q.en.trim(), ko: typeof q.ko === "string" ? q.ko.trim() : "" }))
     };
   }
@@ -208,8 +223,8 @@
     return p._slides[i] || (p._slides[i] = URL.createObjectURL(blobs[i]));
   };
   const isTimedAudio = (p) => p.media.kind === "audio" || p.media.kind === "slides";
-  const KIND = { youtube: { label: "영상", icon: "video", cls: "" }, audio: { label: "음성", icon: "audio", cls: " audio" }, slides: { label: "발표", icon: "slides", cls: " slides" } };
-  const kindOf = (p) => KIND[p.media.kind] || KIND.audio;
+  const KIND = { youtube: { label: "영상", icon: "video", cls: "" }, audio: { label: "음성", icon: "audio", cls: " audio" }, slides: { label: "발표", icon: "slides", cls: " slides" }, grammar: { label: "문법", icon: "book", cls: " grammar" } };
+  const kindOf = (p) => (p.grammar ? KIND.grammar : KIND[p.media.kind] || KIND.audio);
   const kindIcon = (p) => { const k = kindOf(p), s = el("span", "ic" + k.cls); s.append(icon(k.icon)); return s; };
   const seenOf = (id) => (S.p.seen[id] = S.p.seen[id] || {});
   const pctOf = (p) => Math.round(Object.keys(seenOf(p.id)).length / p.lines.length * 100);
@@ -262,8 +277,10 @@
 
   // ---------- player ----------
   const P = { pack: null, idx: -1, pausedFor: -1, timer: 0 };
-  async function openPack(id) {
+  // listen: open the player even for a grammar pack (its examples as one audio list)
+  async function openPack(id, listen) {
     const p = S.packs[id]; if (!p) return;
+    if (p.grammar && !listen) { open("grammar", id); return; }
     P.pack = p; P.idx = -1; P.pausedFor = -1;
     S.p.cont = { id, t: S.p.cont && S.p.cont.id === id ? S.p.cont.t : 0 };
     S.p.opened = Object.assign(S.p.opened || {}, { [id]: Date.now() }); saveP();
@@ -309,11 +326,12 @@
     if (!P.pack) return;
     const t = M.time(), L = P.pack.lines, cur = L[P.idx];
     // check the end of the current sentence before switching, since one line's end is often the next line's start
-    if (S.set.pauseEach && cur && M.playing() && t >= cur.e - 0.08 && P.pausedFor !== P.idx) {
+    // caption times are estimates, so wait a moment before pausing or moving on rather than cutting the last word
+    if (S.set.pauseEach && cur && M.playing() && t >= cur.e + 0.1 && P.pausedFor !== P.idx) {
       P.pausedFor = P.idx; M.pause(); return;
     }
     if (P.pausedFor === P.idx && !M.playing()) return;
-    const i = lineAt(t);
+    const i = lineAt(t - 0.15);
     if (i !== P.idx && i >= 0) setLine(i, true);
     if (Math.abs((S.p.cont.t || 0) - t) > 3) { S.p.cont.t = t; saveP(); }
   }
@@ -491,6 +509,375 @@
     if (P.pack === p) { renderScript(); if (P.idx === i) setLine(i, false); }
     renderChrome();
   }
+
+  // ---------- grammar lesson: rule card -> choice quiz -> recall (type the English for a Korean meaning) ----------
+  // a wrong quiz answer goes to the wrong-answer notebook (오답노트); with 자동 북마크 on, its example sentence is bookmarked too
+  const GR = { p: null, step: "rule", ri: 0, typed: "", res: null, known: 0 };
+  const grBody = $("#grBody");
+  const autoMark = () => S.set.autoMark !== false;
+  function openGrammar(id) {
+    const p = S.packs[id]; if (!p || !p.grammar) return;
+    if (GR.p !== p) { GR.p = p; GR.step = "rule"; QZ.mode = null; resetRecall(); }
+    $("#topTitle").textContent = p.title;
+    renderGrammar();
+  }
+  function seenLine(p, i) {
+    const s = seenOf(p.id);
+    if (i < 0 || s[i]) return;
+    s[i] = 1; day().lines += 1; addXP(1);
+  }
+  const isMarked = (p, i) => !!S.cards[cardId(p.id, i)];
+  function markLine(p, i) { if (i >= 0 && !isMarked(p, i)) toggleCard(p, i); }
+  function playLine(p, i) { const l = p.lines[i]; if (l) playSegment(p, l.t, l.e, "grYtHost", "grYtWrap"); }
+  function speaker(p, i) {
+    const b = el("button", "speak-sm"); b.type = "button"; b.setAttribute("aria-label", "예문 듣기"); b.append(icon("sound"));
+    b.onclick = () => playLine(p, i); return b;
+  }
+  function exampleRow(p, i) {
+    const l = p.lines[i], row = el("div", "gr-ex"), txt = el("div");
+    txt.append(el("div", "en", l.en), el("div", "ko", l.ko));
+    row.append(speaker(p, i), txt);
+    return row;
+  }
+  // bookmark or unbookmark an example by hand, whatever the automatic setting did
+  function markBtn(p, i, rerender) {
+    const on = isMarked(p, i);
+    const b = el("button", "toggle mark"); b.type = "button"; b.setAttribute("aria-pressed", String(on));
+    b.append(icon("star"), el("span", "", on ? "북마크됨" : "북마크"));
+    b.onclick = () => { toggleCard(p, i); rerender(); };
+    return b;
+  }
+  function autoMarkToggle(rerender) {
+    const b = el("button", "toggle small auto-mark", autoMark() ? "틀리면 자동 북마크 켬" : "틀리면 자동 북마크 끔"); b.type = "button";
+    b.setAttribute("aria-pressed", String(autoMark()));
+    b.onclick = () => { S.set.autoMark = !autoMark(); save("settings", S.set); rerender(); };
+    return b;
+  }
+  const grBest = () => ((S.p.gram || {})[GR.p.id] || {}).best;
+  function renderGrammar() {
+    const p = GR.p, g = p.grammar;
+    $("#grRef").textContent = g.ref || "문법";
+    $("#grTitle").textContent = p.title;
+    renderGrammarStats();
+    document.querySelectorAll("#grSteps button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.step === GR.step)));
+    grBody.textContent = "";
+    stopClip();
+    if (GR.step === "rule") renderRule();
+    else if (GR.step === "quiz") { if (QZ.mode !== "unit" && QZ.mode !== "unit-missed") startUnitQuiz(); renderQuizInto(grBody, renderGrammar); }
+    else renderRecall();
+  }
+  function renderGrammarStats() {
+    const best = grBest();
+    $("#grStats").textContent = statsText(GR.p) + (best != null ? ` · 퀴즈 최고 ${best}/${GR.p.grammar.quiz.length}` : "");
+  }
+  document.querySelectorAll("#grSteps button").forEach((b) => { b.onclick = () => { GR.step = b.dataset.step; renderGrammar(); window.scrollTo(0, 0); }; });
+  $("#grListen").onclick = () => { if (GR.p) openPack(GR.p.id, true); };
+
+  function renderRule() {
+    const p = GR.p, g = p.grammar;
+    if (g.intro) grBody.append(el("p", "gr-intro", g.intro));
+    g.points.forEach((pt, k) => {
+      const box = el("div", "panel gr-point");
+      box.append(el("h3", "", `${k + 1}. ${pt.h}`));
+      if (pt.d) box.append(el("p", "", pt.d));
+      pt.ex.forEach((i) => box.append(exampleRow(p, i)));
+      grBody.append(box);
+    });
+    if (g.pairs.length) {
+      const box = el("div", "panel gr-pairs");
+      box.append(el("h3", "", "헷갈리는 짝"));
+      g.pairs.forEach((pr) => {
+        const li = el("div", "gr-pair");
+        const head = el("div", "ab"); head.append(el("b", "", pr.a), el("span", "vs", "vs"), el("b", "", pr.b));
+        li.append(head); if (pr.d) li.append(el("p", "", pr.d));
+        box.append(li);
+      });
+      grBody.append(box);
+    }
+    if (g.quiz.length) {
+      const start = el("button", "btn primary wide", "퀴즈 풀기"); start.type = "button";
+      start.onclick = () => { GR.step = "quiz"; startUnitQuiz(); renderGrammar(); window.scrollTo(0, 0); };
+      grBody.append(start);
+    }
+  }
+
+  // ---------- wrong-answer notebook ----------
+  // one entry per quiz: kept until the learner takes it out, even after answering it right again
+  const wrongKey = (packId, k) => `${packId}~q${k}`;
+  const saveWrong = () => save("wrong", S.wrong);
+  const wrongItems = (out) => Object.values(S.wrong)
+    .filter((w) => !!w.out === !!out && quizOf(w))
+    .sort((a, b) => (a.packId === b.packId ? a.k - b.k : a.packId < b.packId ? -1 : 1));
+  function noteWrong(p, k) {
+    const id = wrongKey(p.id, k);
+    const w = S.wrong[id] || (S.wrong[id] = { id, packId: p.id, k, added: TODAY(), miss: 0, hit: 0 });
+    w.miss += 1; w.out = false; w.last = TODAY(); saveWrong();
+  }
+  function setWrongOut(packId, k, out) {
+    const id = wrongKey(packId, k);
+    if (!S.wrong[id]) S.wrong[id] = { id, packId, k, added: TODAY(), miss: 0, hit: 0 };
+    S.wrong[id].out = out; saveWrong();
+    toast(out ? "오답노트에서 뺐어요" : "오답노트에 담았어요");
+  }
+  const inWrong = (packId, k) => { const w = S.wrong[wrongKey(packId, k)]; return !!(w && !w.out); };
+  function wrongBtn(packId, k, rerender) {
+    const on = inWrong(packId, k);
+    const b = el("button", "toggle", on ? "오답노트에서 빼기" : "오답노트에 담기"); b.type = "button";
+    b.onclick = () => { setWrongOut(packId, k, on); rerender(); };
+    return b;
+  }
+
+  // ---------- choice quiz (one grammar unit, or the wrong-answer notebook across units) ----------
+  // items: [{ packId, k }]; ans[i] is the option picked for item i, so earlier questions can be revisited
+  // perm[i] is the order item i's options are shown in (the right answer moves around; "—" stays last)
+  const QZ = { mode: null, items: [], qi: 0, ans: [], perm: [] };
+  const quizOf = (it) => { const p = S.packs[it.packId]; const q = p && p.grammar && p.grammar.quiz[it.k]; return q ? { p, q } : null; };
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function startQuiz(mode, items) {
+    // mixed order, so the answer can't be guessed from the rule just above it
+    QZ.mode = mode; QZ.items = shuffle(items.filter(quizOf)); QZ.qi = 0; QZ.ans = [];
+    QZ.perm = QZ.items.map((it) => {
+      const opts = quizOf(it).q.opts, idx = opts.map((_, k) => k);
+      const none = idx.filter((k) => opts[k] === "—");
+      return shuffle(idx.filter((k) => opts[k] !== "—")).concat(none);
+    });
+  }
+  function startUnitQuiz() { startQuiz("unit", GR.p.grammar.quiz.map((_, k) => ({ packId: GR.p.id, k }))); }
+  const isRight = (i) => { const x = quizOf(QZ.items[i]); return x && QZ.ans[i] === x.q.a; };
+  function renderQuizInto(box, rerender) {
+    const n = QZ.items.length;
+    if (QZ.qi >= n) { renderQuizEnd(box, rerender); return; }
+    const it = QZ.items[QZ.qi], { p, q } = quizOf(it), picked = QZ.ans[QZ.qi], done = picked != null;
+    const card = el("div", "panel gr-quiz");
+    const head = el("div", "gr-qhead");
+    head.append(el("span", "gr-count", `${QZ.qi + 1} / ${n}`), autoMarkToggle(rerender));
+    card.append(head);
+    if (QZ.mode === "wrong") card.append(el("p", "gr-src", p.title));
+    if (q.ko) card.append(el("p", "gr-hint", q.ko));
+    // "___" alone means the options are whole sentences: pick the right one
+    const whole = q.q === "___";
+    const sent = el("p", "gr-q" + (whole ? " whole" : ""));
+    const [before, after] = q.q.split("___");
+    const blank = el("span", "blank" + (done ? " right" : ""), done ? q.opts[q.a] : "    ");
+    sent.append(before, blank, after || "");
+    if (!whole || done) card.append(sent);   // a whole-sentence question shows its sentence only once answered
+    const opts = el("div", "gr-opts" + (whole || q.opts.some((o) => o.length > 14) ? " long" : ""));
+    QZ.perm[QZ.qi].forEach((k) => {
+      const o = q.opts[k], b = el("button", "btn", o === "—" ? "— (없음)" : o); b.type = "button";
+      if (done) { b.disabled = true; if (k === q.a) b.classList.add("right"); else if (k === picked) b.classList.add("wrong"); }
+      b.onclick = () => pickQuiz(k, rerender);
+      opts.append(b);
+    });
+    card.append(opts);
+    if (done) {
+      const ok = picked === q.a, fb = el("div", "gr-fb" + (ok ? " ok" : " no"));
+      fb.append(el("b", "", ok ? "맞았어요" : "틀렸어요"));
+      if (q.why) fb.append(el("p", "", q.why));
+      if (q.ex >= 0) fb.append(exampleRow(p, q.ex));
+      const tools = el("div", "gr-tools");
+      if (q.ex >= 0) tools.append(markBtn(p, q.ex, rerender));
+      tools.append(wrongBtn(p.id, it.k, rerender));
+      fb.append(tools);
+      card.append(fb);
+    }
+    const nav = el("div", "row gr-nav");
+    if (QZ.qi > 0) {
+      const prev = el("button", "btn", "이전 문제"); prev.type = "button";
+      prev.onclick = () => { QZ.qi -= 1; rerender(); };
+      nav.append(prev);
+    }
+    if (done) {
+      const next = el("button", "btn primary", QZ.qi + 1 < n ? "다음 문제" : "결과 보기"); next.type = "button";
+      next.onclick = () => { QZ.qi += 1; rerender(); };
+      nav.append(next);
+    }
+    if (nav.childNodes.length) card.append(nav);
+    box.append(card);
+  }
+  function pickQuiz(k, rerender) {
+    if (QZ.ans[QZ.qi] != null) return;
+    const it = QZ.items[QZ.qi], { p, q } = quizOf(it);
+    QZ.ans[QZ.qi] = k;
+    if (k === q.a) {
+      addXP(1);
+      const w = S.wrong[wrongKey(p.id, it.k)]; if (w) { w.hit += 1; saveWrong(); }
+    } else {
+      noteWrong(p, it.k);
+      if (autoMark()) markLine(p, q.ex);
+    }
+    seenLine(p, q.ex);
+    rerender();
+    if (q.ex >= 0) playLine(p, q.ex);
+  }
+  function renderQuizEnd(box, rerender) {
+    const n = QZ.items.length, right = QZ.items.reduce((s, _, i) => s + (isRight(i) ? 1 : 0), 0);
+    const missed = QZ.items.filter((_, i) => !isRight(i));
+    if (QZ.mode === "unit") {
+      S.p.gram = S.p.gram || {};
+      const rec = S.p.gram[GR.p.id] || {};
+      S.p.gram[GR.p.id] = { best: Math.max(rec.best || 0, right), last: right, at: TODAY() }; saveP();
+      renderGrammarStats();
+    }
+    const end = el("div", "panel gr-end");
+    end.append(el("b", "gr-score", `${right} / ${n}`), el("p", "muted small",
+      right === n ? "모두 맞았어요!" : `틀린 ${n - right}문제는 오답노트에 담겼어요.`));
+    if (missed.length) {
+      const again = el("button", "btn primary wide", "틀린 문제만 다시"); again.type = "button";
+      again.onclick = () => { startQuiz(QZ.mode === "wrong" ? "wrong" : "unit-missed", missed); rerender(); };
+      end.append(again);
+    }
+    const back = el("button", "btn wide", "이전 문제로 돌아가 보기"); back.type = "button";
+    back.onclick = () => { QZ.qi = n - 1; rerender(); };
+    end.append(back);
+    if (QZ.mode === "wrong") {
+      const nb = el("button", "btn wide", "오답노트 보기"); nb.type = "button";
+      nb.onclick = () => go("wrong");
+      end.append(nb);
+    } else {
+      const rc = el("button", "btn wide" + (missed.length ? "" : " primary"), "떠올리기로 넘어가기"); rc.type = "button";
+      rc.onclick = () => { GR.step = "recall"; resetRecall(); renderGrammar(); };
+      const re = el("button", "link", "처음부터 다시 풀기"); re.type = "button";
+      re.onclick = () => { startUnitQuiz(); rerender(); };
+      end.append(rc, re);
+    }
+    box.append(end);
+  }
+
+  // ---------- recall: see the Korean, type the English ----------
+  function resetRecall() { GR.ri = 0; GR.typed = ""; GR.res = null; GR.known = 0; }
+  // spelling-insensitive comparison: case, punctuation and contractions don't count as mistakes
+  const EXPAND = [[/\bcan't\b/g, "can not"], [/\bcannot\b/g, "can not"], [/\bwon't\b/g, "will not"], [/n't\b/g, " not"], [/'m\b/g, " am"], [/'re\b/g, " are"],
+    [/'ll\b/g, " will"], [/'ve\b/g, " have"], [/'d\b/g, " would"], [/\b(it|that|there|what|he|she|who|where|here|how)'s\b/g, "$1 is"]];
+  function words(s) {
+    s = s.toLowerCase().replace(/[’‘`]/g, "'").replace(/\ba\.m\./g, "am").replace(/\bp\.m\./g, "pm");
+    EXPAND.forEach(([r, v]) => { s = s.replace(r, v); });
+    return s.replace(/[^a-z0-9'\s]/g, " ").split(/\s+/).filter(Boolean);
+  }
+  // words of b missing from a, and words of a that b doesn't have (longest common subsequence)
+  function wordDiff(a, b) {
+    const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const extra = [], missing = [];
+    let i = 0, j = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) extra.push(a[i++]); else missing.push(b[j++]);
+    }
+    return { extra: extra.concat(a.slice(i)), missing: missing.concat(b.slice(j)) };
+  }
+  function renderRecall() {
+    const p = GR.p, L = p.lines, n = L.length;
+    if (GR.ri >= n) {
+      const box = el("div", "panel gr-end");
+      box.append(el("b", "gr-score", `${GR.known} / ${n}`), el("p", "muted small", GR.known === n ? "전부 맞게 썼어요!" : "틀린 문장은 북마크에서 간격을 두고 다시 볼 수 있어요."));
+      const again = el("button", "btn primary wide", "처음부터 다시"); again.type = "button";
+      again.onclick = () => { resetRecall(); renderGrammar(); };
+      const rv = el("button", "btn wide", "북마크 보기"); rv.type = "button";
+      rv.onclick = () => go("saved");
+      box.append(again, rv);
+      grBody.append(box);
+      return;
+    }
+    const i = GR.ri, l = L[i], card = el("div", "panel gr-recall");
+    const head = el("div", "gr-qhead");
+    head.append(el("span", "gr-count", `${i + 1} / ${n}`), autoMarkToggle(renderGrammar));
+    card.append(head, el("p", "muted small", "뜻을 보고 영어로 써 보세요"), el("p", "gr-ko", l.ko));
+    const next = (known) => {
+      if (known) GR.known += 1; else if (autoMark()) markLine(p, i);
+      seenLine(p, i); GR.ri += 1; GR.typed = ""; GR.res = null; renderGrammar();
+      const inp = $("#grInput"); if (inp) inp.focus();
+    };
+    if (!GR.res) {
+      const inp = el("textarea", "gr-input"); inp.id = "grInput"; inp.rows = 2; inp.value = GR.typed;
+      inp.placeholder = "영어 문장 입력"; inp.setAttribute("aria-label", "영어 문장 입력");
+      inp.setAttribute("autocapitalize", "sentences"); inp.setAttribute("autocomplete", "off"); inp.spellcheck = false;
+      const check = () => {
+        GR.typed = inp.value.trim();
+        if (!GR.typed) { toast("영어 문장을 써 주세요. 모르면 '모르겠어요'를 눌러요"); return; }
+        const d = wordDiff(words(GR.typed), words(l.en));
+        GR.res = !d.extra.length && !d.missing.length ? "ok" : "diff";
+        if (GR.res === "ok") GR.known += 1;
+        renderGrammar(); playLine(p, i);
+      };
+      inp.oninput = () => { GR.typed = inp.value; };
+      inp.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); check(); } };
+      const row = el("div", "row gr-grade");
+      const skip = el("button", "btn", "모르겠어요"); skip.type = "button";
+      skip.onclick = () => { GR.res = "skip"; if (autoMark()) markLine(p, i); renderGrammar(); playLine(p, i); };
+      const ok = el("button", "btn primary", "확인"); ok.type = "button"; ok.onclick = check;
+      row.append(skip, ok);
+      card.append(inp, row);
+    } else {
+      const fb = el("div", "gr-fb" + (GR.res === "ok" ? " ok" : " no"));
+      fb.append(el("b", "", GR.res === "ok" ? "맞았어요" : GR.res === "skip" ? "정답" : "조금 달라요"));
+      if (GR.res === "diff") {
+        const mine = el("p", "gr-mine"); mine.append(el("span", "lbl", "내 답 "), GR.typed); fb.append(mine);
+        const d = wordDiff(words(GR.typed), words(l.en));
+        if (d.missing.length) fb.append(el("p", "gr-diff", "빠지거나 다른 단어: " + d.missing.join(", ")));
+        if (d.extra.length) fb.append(el("p", "gr-diff extra", "정답에 없는 단어: " + d.extra.join(", ")));
+      }
+      const ans = el("div", "gr-ans"); ans.append(speaker(p, i), el("b", "", l.en));
+      fb.append(ans);
+      if (l.note) fb.append(el("p", "muted small", l.note));
+      const tools = el("div", "gr-tools"); tools.append(markBtn(p, i, renderGrammar)); fb.append(tools);
+      card.append(fb);
+      const row = el("div", "row gr-grade");
+      if (GR.res === "diff") {
+        // a different wording can still be right, so the learner decides
+        const no = el("button", "btn", "틀렸어요"); no.type = "button"; no.onclick = () => next(false);
+        const yes = el("button", "btn good", "맞은 걸로 할게요"); yes.type = "button"; yes.onclick = () => next(true);
+        row.append(no, yes);
+      } else {
+        const nx = el("button", "btn primary", "다음"); nx.type = "button";
+        // "모르겠어요" was already counted (and bookmarked) when it was pressed
+        nx.onclick = () => { seenLine(p, i); GR.ri += 1; GR.typed = ""; GR.res = null; renderGrammar(); };
+        row.append(nx);
+      }
+      card.append(row);
+    }
+    grBody.append(card);
+  }
+
+  // ---------- wrong-answer notebook tab and its quiz ----------
+  function renderWrong() {
+    const items = wrongItems(false), outs = wrongItems(true);
+    $("#wrCount").textContent = items.length ? `틀린 퀴즈 ${items.length}개` : "오답노트가 비어 있어요";
+    $("#wrStart").disabled = !items.length;
+    const list = $("#wrList"); list.textContent = "";
+    if (!items.length) list.append(el("p", "muted small", "문법 팩 퀴즈에서 틀린 문제가 여기 모여요. 다시 맞혀도 직접 빼기 전까지는 남아 있어요."));
+    const group = (arr, box) => {
+      let cur = null;
+      arr.forEach((w) => {
+        const { p, q } = quizOf(w);
+        if (cur !== p.id) { cur = p.id; box.append(el("h3", "wr-pack", p.title)); }
+        box.append(wrongCard(w, p, q));
+      });
+    };
+    group(items, list);
+    $("#wrOutBox").hidden = !outs.length;
+    $("#wrOutCount").textContent = `뺀 문제 ${outs.length}개`;
+    const ol = $("#wrOutList"); ol.textContent = "";
+    group(outs, ol);
+  }
+  function wrongCard(w, p, q) {
+    const box = el("div", "panel wr-item" + (w.out ? " out" : ""));
+    if (q.ko) box.append(el("p", "gr-hint", q.ko));
+    const sent = el("p", "gr-q small");
+    const [before, after] = q.q.split("___");
+    sent.append(before, el("span", "blank right", q.opts[q.a]), after || "");
+    box.append(sent);
+    if (q.why) box.append(el("p", "muted small", q.why));
+    box.append(el("p", "wr-stat", `틀린 횟수 ${w.miss} · 다시 맞힌 횟수 ${w.hit}`));
+    const tools = el("div", "gr-tools");
+    if (q.ex >= 0) tools.append(speaker(p, q.ex), markBtn(p, q.ex, renderWrong));
+    tools.append(wrongBtn(p.id, w.k, renderWrong));
+    box.append(tools);
+    return box;
+  }
+  const wqBody = $("#wqBody");
+  function renderWQ() { wqBody.textContent = ""; stopClip(); renderQuizInto(wqBody, renderWQ); }
+  function startWrongQuiz() { startQuiz("wrong", wrongItems(false).map((w) => ({ packId: w.packId, k: w.k }))); renderWQ(); }
+  $("#wrStart").onclick = () => open("wquiz");
+  $("#wrongQuiz").onclick = () => open("wquiz");
 
   // ---------- review ----------
   const RV = { queue: [], i: 0 };
@@ -1108,10 +1495,49 @@
   $("#modeD").onclick = () => open("talk");
 
   // ---------- bookmarks tab ----------
-  const GONE = "__gone__";   // bookmarks whose pack was deleted
-  const bookmarksOf = (packId) => Object.values(S.cards)
-    .filter((c) => (packId === GONE ? !S.packs[c.packId] : c.packId === packId))
-    .sort((a, b) => a.t - b.t);
+  // a bookmark list is one pack, one folder ("f:<name>"), every bookmark (ALL), or those whose pack was deleted (GONE)
+  const GONE = "__gone__", ALL = "__all__", FOLDER = "f:";
+  const inList = (c, key) => {
+    const p = S.packs[c.packId];
+    if (key === ALL) return true;
+    if (key === GONE) return !p;
+    if (key.startsWith(FOLDER)) return !!p && folderOf(p) === key.slice(FOLDER.length);
+    return c.packId === key;
+  };
+  const bookmarksOf = (key) => Object.values(S.cards)
+    .filter((c) => inList(c, key))
+    .sort((a, b) => (a.packId === b.packId ? a.t - b.t : a.packId < b.packId ? -1 : 1));
+  function savedPackCard(p) {
+    const b = el("button", "pack"); b.type = "button";
+    const mid = el("span"); mid.style.minWidth = "0";
+    mid.append(el("div", "t", p.title), statsLine(p));
+    const cnt = el("span", "pct", String(bookmarksOf(p.id).length)); cnt.setAttribute("aria-hidden", "true");
+    b.append(kindIcon(p), mid, cnt);
+    b.onclick = () => open("savedpack", p.id);
+    return b;
+  }
+  function savedGroupCard(title, sub, n, iconName, onClick) {
+    const b = el("button", "pack folder"); b.type = "button";
+    const ic = el("span", "ic"); ic.append(icon(iconName));
+    const mid = el("span"); mid.style.minWidth = "0";
+    mid.append(el("div", "t", title), el("div", "s", sub));
+    b.append(ic, mid, el("span", "pct", String(n)));
+    b.onclick = onClick;
+    return b;
+  }
+  const watchedPacks = () => {
+    const opened = S.p.opened || {};
+    return Object.values(S.packs)
+      .filter((p) => bookmarksOf(p.id).length || Object.keys(seenOf(p.id)).length)
+      .sort((a, b) => (opened[b.id] || 0) - (opened[a.id] || 0));
+  };
+  function renderSavedFolder(name) {
+    $("#topTitle").textContent = name;
+    const box = $("#sfList"); box.textContent = "";
+    const n = bookmarksOf(FOLDER + name).length;
+    if (n) box.append(savedGroupCard(`${name} 북마크 모두 보기`, "이 폴더의 북마크를 한 번에", n, "star", () => open("savedpack", FOLDER + name)));
+    watchedPacks().filter((p) => folderOf(p) === name).sort(folderOrder).forEach((p) => box.append(savedPackCard(p)));
+  }
   function renderSaved() {
     const due = Object.values(S.cards).filter((c) => c.due <= TODAY()).length;
     const total = Object.keys(S.cards).length;
@@ -1124,24 +1550,21 @@
       : "북마크 노트와 30초 말하기를 복사해서 Claude 앱에 붙여넣어요";
     $("#savedTotal").textContent = total ? `북마크 ${total}개` : "";
     const list = $("#watchedList"); list.textContent = "";
-    const opened = S.p.opened || {};
-    const packs = Object.values(S.packs)
-      .filter((p) => bookmarksOf(p.id).length || Object.keys(seenOf(p.id)).length)
-      .sort((a, b) => (opened[b.id] || 0) - (opened[a.id] || 0));
+    const packs = watchedPacks();
     if (!packs.length && !bookmarksOf(GONE).length) {
       list.append(el("p", "muted", "아직 본 콘텐츠가 없어요. 홈에서 콘텐츠를 골라 보세요."));
       return;
     }
+    if (total) list.append(savedGroupCard("전체 북마크", "모든 콘텐츠의 북마크를 한 번에", total, "star", () => open("savedpack", ALL)));
+    // packs of one series (a drama, the grammar course) sit in a folder, like on the home screen
+    const seenFolders = new Set();
     packs.forEach((p) => {
-      const n = bookmarksOf(p.id).length;
-      const b = el("button", "pack"); b.type = "button";
-      const ic = kindIcon(p);
-      const mid = el("span"); mid.style.minWidth = "0";
-      mid.append(el("div", "t", p.title), statsLine(p));
-      const cnt = el("span", "pct", String(n)); cnt.setAttribute("aria-hidden", "true");
-      b.append(ic, mid, cnt);
-      b.onclick = () => open("savedpack", p.id);
-      list.append(b);
+      const f = folderOf(p);
+      if (!f) { list.append(savedPackCard(p)); return; }
+      if (seenFolders.has(f)) return;
+      seenFolders.add(f);
+      const inF = packs.filter((x) => folderOf(x) === f).length;
+      list.append(savedGroupCard(f, `콘텐츠 ${inF}개`, bookmarksOf(FOLDER + f).length, "folder", () => open("savedfolder", f)));
     });
     const gone = bookmarksOf(GONE).length;
     if (gone) {
@@ -1156,8 +1579,8 @@
   let spPack = null, spShowAll = false;
   function renderSavedPack(id) {
     spPack = id;
-    const p = S.packs[id];
-    $("#topTitle").textContent = p ? p.title : "삭제한 콘텐츠";
+    const p = S.packs[id], group = id === ALL || id.startsWith(FOLDER);
+    $("#topTitle").textContent = p ? p.title : id === ALL ? "전체 북마크" : group ? id.slice(FOLDER.length) + " 북마크" : "삭제한 콘텐츠";
     $("#spYtWrap").hidden = true;
     $("#spOpen").hidden = !p;
     $("#spShowAll").setAttribute("aria-pressed", String(spShowAll));
@@ -1166,15 +1589,17 @@
     const ol = $("#spList"); ol.textContent = "";
     if (!items.length) { ol.append(el("li", "muted", "아직 북마크한 문장이 없어요. 이 콘텐츠를 보다가 모르는 문장의 별을 눌러 보세요.")); return; }
     items.forEach((c) => {
+      const pc = S.packs[c.packId];   // in a combined list every bookmark plays from its own pack
       const li = el("li", "bm" + (spShowAll ? " open" : ""));
       const face = el("button", "bm-face"); face.type = "button";
+      if (group) face.append(el("span", "src", pc ? pc.title : "삭제한 콘텐츠"));
       face.append(el("span", "ko", c.ko || c.en));
       const back = el("span", "en-wrap");
       back.append(el("span", "en", c.en));
       if (c.note) back.append(el("span", "note", c.note));
       face.append(back);
       if (c.memo) face.append(el("span", "memo-tag", "노트: " + c.memo));
-      const st0 = p && p.lines[c.i] && p.lines[c.i].en === c.en ? p.lines[c.i].study : null;
+      const st0 = pc && pc.lines[c.i] && pc.lines[c.i].en === c.en ? pc.lines[c.i].study : null;
       const studyRow = el("div", "bm-actions");
       let studyWrap = null;
       if (st0) {
@@ -1208,7 +1633,7 @@
       face.onclick = () => { li.classList.toggle("open"); face.setAttribute("aria-expanded", String(li.classList.contains("open"))); };
       const side = el("div", "bm-side");
       const sp = el("button", "speak"); sp.type = "button"; sp.setAttribute("aria-label", "원래 음성 듣기: " + c.en); sp.append(icon("sound"));
-      sp.onclick = () => { if (p) playSegment(p, c.t, c.e, "spYtHost", "spYtWrap"); else tts(c.en); };
+      sp.onclick = () => { if (pc) playSegment(pc, c.t, c.e, "spYtHost", "spYtWrap"); else tts(c.en); };
       const st = el("button", "unstar"); st.type = "button"; st.setAttribute("aria-label", "북마크 해제: " + c.en); st.append(icon("star"));
       st.onclick = () => {
         if (!st.classList.contains("confirm")) { st.classList.add("confirm"); toast("한 번 더 누르면 북마크가 해제돼요"); setTimeout(() => st.classList.remove("confirm"), 2500); return; }
@@ -1225,7 +1650,7 @@
   $("#spOpen").onclick = () => { if (S.packs[spPack]) openPack(spPack); };
   $("#startReview").onclick = () => open("review");
   $("#exportBtn").onclick = () => {
-    const blob = new Blob([JSON.stringify({ type: "ce-backup", v: 1, at: new Date().toISOString(), progress: S.p, cards: S.cards, settings: S.set, speak: S.speak, talks: S.talks })], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ type: "ce-backup", v: 1, at: new Date().toISOString(), progress: S.p, cards: S.cards, settings: S.set, speak: S.speak, talks: S.talks, wrong: S.wrong })], { type: "application/json" });
     const a = el("a"); a.href = URL.createObjectURL(blob); a.download = `출퇴근영어-백업-${TODAY()}.json`; document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
@@ -1235,8 +1660,8 @@
       const o = JSON.parse(await f.text());
       if (o.type !== "ce-backup") throw new Error();
       S.p = o.progress; S.cards = o.cards; S.set = Object.assign(S.set, o.settings || {});
-      S.speak = o.speak || S.speak; S.talks = Array.isArray(o.talks) ? o.talks : S.talks;
-      saveP(); saveCards(); save("settings", S.set); save("speak", S.speak); save("talks", S.talks); toast("백업을 불러왔어요"); renderSaved(); renderChrome();
+      S.speak = o.speak || S.speak; S.talks = Array.isArray(o.talks) ? o.talks : S.talks; S.wrong = o.wrong || S.wrong;
+      saveP(); saveCards(); save("settings", S.set); save("speak", S.speak); save("talks", S.talks); saveWrong(); toast("백업을 불러왔어요"); renderSaved(); renderChrome();
     } catch (err) { toast("백업 파일이 아니거나 손상됐어요."); }
   });
 
@@ -1259,6 +1684,8 @@
     $("#streakText").textContent = st ? `${st}일 연속 학습 중 · 최고 ${S.p.best}일` : "오늘 한 문장만 들어도 연속 기록이 시작돼요";
     const c = S.p.cont && S.packs[S.p.cont.id];
     $("#resume").hidden = !c;
+    const nWrong = wrongItems(false).length;
+    $("#wrongQuiz").hidden = !nWrong; $("#wrongQuizN").textContent = `틀린 문제 ${nWrong}개 다시 풀기`;
     if (c) { $("#resumeTitle").textContent = c.title; $("#resumePct").textContent = pctOf(c) + "%"; }
     renderInterests();
     const cands = candidates();
@@ -1625,7 +2052,7 @@
   $("#resume").onclick = () => { if (S.p.cont) openPack(S.p.cont.id); };
 
   // ---------- navigation ----------
-  const TITLES = { home: "출퇴근 영어", saved: "북마크", review: "복습", speak: "말하기", talk: "30초 말하기", ask: "Claude에게 묻기", drive: "운전 모드", manage: "팩 관리" };
+  const TITLES = { home: "출퇴근 영어", saved: "북마크", review: "복습", speak: "말하기", talk: "30초 말하기", ask: "Claude에게 묻기", drive: "운전 모드", manage: "팩 관리", wrong: "오답노트", wquiz: "오답 퀴즈" };
   const NAV = { tab: "home", stack: [] };
   let current = "home";
   function show(name, arg) {
@@ -1647,6 +2074,10 @@
     if (name === "drive") openDrive();
     if (name === "manage") renderManage();
     if (name === "folder") renderFolder(arg);
+    if (name === "grammar") openGrammar(arg);
+    if (name === "wrong") renderWrong();
+    if (name === "wquiz") startWrongQuiz();
+    if (name === "savedfolder") renderSavedFolder(arg);
     if (name === "ask") initAsk();
     if (name === "savedpack") renderSavedPack(arg);
     if (name === "review") { startReview(); if (RV.queue.length) setTimeout(playClip, 300); }
@@ -1662,7 +2093,7 @@
     NAV.stack.pop();
     const top = NAV.stack[NAV.stack.length - 1];
     if (!top) { show(NAV.tab); return; }
-    if (top.name === "player") { NAV.stack.pop(); openPack(top.arg); return; }
+    if (top.name === "player") { NAV.stack.pop(); openPack(top.arg, true); return; }
     show(top.name, top.arg);
   }
   document.querySelectorAll(".tabs button").forEach((b) => { b.onclick = () => go(b.dataset.tab); });
