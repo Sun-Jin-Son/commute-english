@@ -331,7 +331,9 @@
       P.pausedFor = P.idx; M.pause(); return;
     }
     if (P.pausedFor === P.idx && !M.playing()) return;
-    const i = lineAt(t - 0.15);
+    let i = lineAt(t - 0.15);
+    // the delay only holds back moving on during playback; right after jumping to a line (알아요, 이전, tap), stay on it
+    if (cur && i < P.idx && t >= cur.t - 0.3) i = P.idx;
     if (i !== P.idx && i >= 0) setLine(i, true);
     if (Math.abs((S.p.cont.t || 0) - t) > 3) { S.p.cont.t = t; saveP(); }
   }
