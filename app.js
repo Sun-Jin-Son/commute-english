@@ -1461,27 +1461,15 @@
     if (on) { $("#keyInput").value = S.set.ytKey || ""; $("#keyForm").scrollIntoView({ block: "center", behavior: "smooth" }); }
   }
   $("#candSearch").onclick = () => liveSearch();
-  // returns false when the text clearly isn't a key; Google is changing its key format, so a wrong key only shows up on the first search
-  function setKey(v) {
-    if (v && !/^[\w.~-]{20,200}$/.test(v)) { toast("API 키 모양이 아니에요. 사용자 인증 정보의 API 키를 그대로 붙여넣어 주세요."); return false; }
-    S.set.ytKey = v; save("settings", S.set);
-    return true;
-  }
+  // the form opens when there is no key or the key stopped working, so this is the one place to set, change or clear it
   $("#keySave").onclick = () => {
     const v = $("#keyInput").value.trim();
-    if (!setKey(v)) return;
+    // Google is changing its key format, so only reject what clearly isn't a key; a wrong key shows up on the first search
+    if (v && !/^[\w.~-]{20,200}$/.test(v)) { toast("API 키 모양이 아니에요. 사용자 인증 정보의 API 키를 그대로 붙여넣어 주세요."); return; }
+    S.set.ytKey = v; save("settings", S.set);
     showKeyForm(false); renderHome();
     if (v) liveSearch(); else toast("API 키를 지웠어요");
-  };
-  // changing the key later is rare, so it lives at the bottom of the pack manager instead of on the home screen
-  function renderKeyState() { $("#mgKeyState").textContent = S.set.ytKey ? "· 설정됨" : "· 없음"; $("#mgKeyInput").value = ""; }
-  $("#mgKeySave").onclick = () => {
-    const v = $("#mgKeyInput").value.trim();
-    if (!v && !S.set.ytKey) return;
-    if (!setKey(v)) return;
-    renderKeyState(); toast(v ? "API 키를 바꿨어요" : "API 키를 지웠어요");
-  };
-  const fmtDur = (s) => (s <= 60 ? "쇼츠" : `${Math.floor(s / 60)}분`);
+  };  const fmtDur = (s) => (s <= 60 ? "쇼츠" : `${Math.floor(s / 60)}분`);
   $("#candAsk").onclick = () => {
     const names = (S.set.topics || DEFAULT_TOPICS).map((t) => TOPICS[t]).filter(Boolean).join(", ");
     copyText(`새 영상 후보 추천해줘 (관심 주제: ${names}, 수준: ${lvName(S.set.target)})`, "복사했어요. Claude 앱 → Code에서 이 PC 세션에 붙여넣으세요.");
@@ -1597,7 +1585,6 @@
   const packBytes = (p) => JSON.stringify({ lines: p.lines, speak: p.speak, talkQs: p.talkQs }).length * 2 + (p.media.blob ? p.media.blob.size : 0)
     + (p.media.slideBlobs || []).reduce((s, b) => s + b.size, 0);
   async function renderManage() {
-    renderKeyState();
     const packs = Object.values(S.packs).sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
     const total = packs.reduce((s, p) => s + packBytes(p), 0);
     let usage = `팩 ${packs.length}개 · 약 ${fmtBytes(total)}`;

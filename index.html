@@ -23,6 +23,7 @@
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
   <symbol id="i-replay" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5"/></symbol>
   <symbol id="i-next" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   <symbol id="i-prev" viewBox="0 0 24 24"><path d="M19 12H6M11 6l-6 6 6 6"/></symbol>
   <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
   <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></symbol>
@@ -78,15 +79,21 @@
       <button class="btn primary wide" type="button" id="interestDone">이대로 추천받기</button>
     </div>
 
+    <button class="resume" id="resume" type="button" hidden>
+      <span class="ic"><svg class="i"><use href="#i-next"/></svg></span>
+      <span class="resume-txt"><small>이어서 보기</small><b id="resumeTitle"></b></span>
+      <span class="resume-pct" id="resumePct"></span>
+    </button>
+
     <div id="recoBox" hidden>
-      <div class="sec-title live-head">
-        <button class="live-toggle" type="button" id="liveToggle" aria-expanded="true" aria-controls="candBox">
-          <h2>실시간 추천</h2><svg class="i chev"><use href="#i-next"/></svg>
+      <div class="live-head">
+        <button class="btn primary live-toggle" type="button" id="liveToggle" aria-expanded="true" aria-controls="candBox">
+          <svg class="i"><use href="#i-spark"/></svg><span>실시간 추천</span><svg class="i chev"><use href="#i-chev"/></svg>
         </button>
-        <button class="iconbtn" type="button" id="liveRefresh" aria-label="다른 영상 보기"><svg class="i"><use href="#i-replay"/></svg></button>
+        <button class="btn listen live-refresh" type="button" id="liveRefresh" aria-label="다른 영상 보기"><svg class="i"><use href="#i-replay"/></svg></button>
       </div>
       <div id="candBox">
-        <button class="btn primary wide" type="button" id="candSearch"><svg class="i"><use href="#i-spark"/></svg><span> 실시간 추천 켜기</span></button>
+        <button class="btn wide" type="button" id="candSearch"><svg class="i"><use href="#i-spark"/></svg><span> 실시간 추천 켜기</span></button>
         <div class="panel key-form" id="keyForm" hidden>
           <b>YouTube API 키</b>
           <p class="muted small">관심 주제로 YouTube에서 자막 있는 영어 영상을 바로 찾아요. 키는 이 휴대폰에만 저장되고 어디에도 올라가지 않아요. 만드는 방법은 PC 폴더의 <b>YouTube-API-키-만들기</b> 안내를 보세요.</p>
@@ -103,12 +110,6 @@
         <button class="link" type="button" id="editInterests">관심 주제 바꾸기</button>
       </div>
     </div>
-
-    <button class="resume" id="resume" type="button" hidden>
-      <span class="ic"><svg class="i"><use href="#i-next"/></svg></span>
-      <span class="resume-txt"><small>이어서 보기</small><b id="resumeTitle"></b></span>
-      <span class="resume-pct" id="resumePct"></span>
-    </button>
 
     <div class="sec-title"><h2>전체 콘텐츠 <button class="link" type="button" id="manageOpen">관리</button></h2>
       <label class="btn small" for="importFile"><svg class="i"><use href="#i-import"/></svg>팩 가져오기</label>
@@ -274,14 +275,7 @@
       <p class="muted small">팩을 가져오면 앱 안에 복사돼요. 다운로드 폴더의 원본 파일은 지워도 괜찮아요. 여기서 지운 팩은 앱에서만 사라지고, 그 팩에서 북마크한 문장과 노트는 남아요.</p>
     </div>
     <ul class="mglist" id="mgList"></ul>
-    <datalist id="folderNames"></datalist>
-    <details class="mg-key">
-      <summary>YouTube API 키 <span class="muted small" id="mgKeyState"></span></summary>
-      <p class="muted small">새 영상 찾기에 쓰는 키예요. 이 휴대폰에만 저장돼요. 칸을 비우고 저장하면 지워져요.</p>
-      <input id="mgKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="API 키 붙여넣기" aria-label="YouTube API 키">
-      <button class="btn small" type="button" id="mgKeySave">저장</button>
-    </details>
-  </section>
+    <datalist id="folderNames"></datalist>  </section>
 
   <!-- DRIVING MODE -->
   <section class="view" id="v-drive" hidden>
