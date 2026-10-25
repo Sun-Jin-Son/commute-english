@@ -872,9 +872,26 @@
     const tools = el("div", "gr-tools");
     if (q.ex >= 0) tools.append(speaker(p, q.ex), markBtn(p, q.ex, renderWrong));
     tools.append(wrongBtn(p.id, w.k, renderWrong));
+    if (w.out) {
+      // gone for good, with its counts; it comes back only if the quiz is missed again
+      const del = el("button", "toggle", "완전히 지우기"); del.type = "button";
+      del.onclick = () => {
+        if (!del.dataset.confirm) { del.dataset.confirm = "1"; del.textContent = "한 번 더 누르면 지워져요"; setTimeout(() => { delete del.dataset.confirm; del.textContent = "완전히 지우기"; }, 3000); return; }
+        delete S.wrong[w.id]; saveWrong(); toast("뺀 문제를 지웠어요"); renderWrong();
+      };
+      tools.append(del);
+    }
     box.append(tools);
     return box;
   }
+  $("#wrOutClear").onclick = () => {
+    const b = $("#wrOutClear"), outs = wrongItems(true);
+    if (!outs.length) return;
+    if (!b.dataset.confirm) { b.dataset.confirm = "1"; b.textContent = `한 번 더 누르면 ${outs.length}개가 모두 지워져요`; setTimeout(() => { delete b.dataset.confirm; b.textContent = "뺀 문제 모두 지우기"; }, 3000); return; }
+    delete b.dataset.confirm; b.textContent = "뺀 문제 모두 지우기";
+    outs.forEach((w) => delete S.wrong[w.id]); saveWrong();
+    toast(`뺀 문제 ${outs.length}개를 지웠어요`); renderWrong();
+  };
   const wqBody = $("#wqBody");
   function renderWQ() { wqBody.textContent = ""; stopClip(); renderQuizInto(wqBody, renderWQ); }
   function startWrongQuiz() { startQuiz("wrong", wrongItems(false).map((w) => ({ packId: w.packId, k: w.k }))); renderWQ(); }
@@ -2232,7 +2249,8 @@
 
   // ---------- boot ----------
   renderChrome(); renderHome();
-  loadPacks().then(renderHome);
+  // screens that list pack content draw again once the packs are in
+  loadPacks().then(() => { renderHome(); if (current === "wrong") renderWrong(); if (current === "saved") renderSaved(); });
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch((e) => console.warn("sw", e));
 })();
